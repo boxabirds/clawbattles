@@ -10,6 +10,9 @@ dist
 target
 pkg
 
+# logs
+*.log
+
 # OS junk
 .DS_Store
 Thumbs.db

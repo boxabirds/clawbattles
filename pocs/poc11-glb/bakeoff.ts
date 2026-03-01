@@ -10,8 +10,8 @@
  * Results saved to bakeoff-results/{api}/{partId}.glb
  */
 
-import { writeFileSync, mkdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { writeFileSync, mkdirSync, statSync, readFileSync, existsSync } from 'fs';
+import { join, extname } from 'path';
 import { BAKEOFF_PARTS, getPrompt } from './prompts';
 
 // ── Config ───────────────────────────────────────────────────────
@@ -38,7 +38,68 @@ interface GenerationResult {
 
 // ── Tripo API ────────────────────────────────────────────────────
 
-async function generateTripo(partId: string, prompt: string): Promise<GenerationResult> {
+const TRIPO_BASE = 'https://api.tripo3d.ai/v2/openapi';
+
+/** Upload an image to Tripo and get back an image_token */
+async function tripoUploadImage(imagePath: string): Promise<{ imageToken: string; fileType: string }> {
+  const imageBytes = readFileSync(imagePath);
+  const ext = extname(imagePath).slice(1); // 'png', 'jpg', etc.
+  const mimeType = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+
+  const formData = new FormData();
+  formData.append('file', new Blob([imageBytes], { type: mimeType }), `image.${ext}`);
+
+  const res = await fetch(`${TRIPO_BASE}/upload`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${TRIPO_KEY}` },
+    body: formData,
+  });
+  const data = await res.json() as any;
+  if (data.code !== 0) {
+    throw new Error(`Upload failed: ${JSON.stringify(data)}`);
+  }
+  return { imageToken: data.data.image_token, fileType: ext };
+}
+
+/** Target face count for retopology. Game-ready parts need 2K-5K faces. */
+const TRIPO_FACE_LIMIT = 3000;
+
+/** Create a Tripo task and poll until complete. Returns task output data. */
+async function tripoCreateAndPoll(taskBody: any, label: string): Promise<{ ok: true; output: any; taskId: string } | { ok: false; error: string }> {
+  const createRes = await fetch(`${TRIPO_BASE}/task`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${TRIPO_KEY}`,
+    },
+    body: JSON.stringify(taskBody),
+  });
+  const createData = await createRes.json() as any;
+  if (createData.code !== 0) {
+    return { ok: false, error: `Create failed: ${JSON.stringify(createData)}` };
+  }
+  const taskId = createData.data.task_id;
+  console.log(`  [tripo] ${label}: task ${taskId} created, polling...`);
+
+  for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
+    await sleep(POLL_INTERVAL_MS);
+    const pollRes = await fetch(`${TRIPO_BASE}/task/${taskId}`, {
+      headers: { 'Authorization': `Bearer ${TRIPO_KEY}` },
+    });
+    const pollData = await pollRes.json() as any;
+    const status = pollData.data?.status;
+
+    if (status === 'success') {
+      return { ok: true, output: pollData.data.output, taskId };
+    }
+    if (status === 'failed') {
+      return { ok: false, error: `Task failed: ${JSON.stringify(pollData.data)}` };
+    }
+  }
+  return { ok: false, error: 'Timeout waiting for completion' };
+}
+
+async function generateTripo(partId: string, prompt: string, imagePath?: string): Promise<GenerationResult> {
   const api = 'tripo';
   const outDir = join(RESULTS_DIR, api);
   mkdirSync(outDir, { recursive: true });
@@ -46,56 +107,63 @@ async function generateTripo(partId: string, prompt: string): Promise<Generation
   const start = Date.now();
 
   try {
-    // Create task
-    // Docs: https://platform.tripo3d.ai/docs/introduction
-    // Endpoint: POST https://api.tripo3d.ai/v2/openapi/task
-    // Poll: GET https://api.tripo3d.ai/v2/openapi/task/{task_id}
-    // GLB URL in response: data.output.model
-    const createRes = await fetch('https://api.tripo3d.ai/v2/openapi/task', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${TRIPO_KEY}`,
-      },
-      body: JSON.stringify({
+    // Step 1: Generate model (image-to-model or text-to-model)
+    let genBody: any;
+
+    if (imagePath && existsSync(imagePath)) {
+      console.log(`  [tripo] ${partId}: uploading reference image...`);
+      const { imageToken, fileType } = await tripoUploadImage(imagePath);
+      console.log(`  [tripo] ${partId}: image uploaded, creating model...`);
+      genBody = {
+        type: 'image_to_model',
+        file: { type: fileType, file_token: imageToken },
+      };
+    } else {
+      genBody = {
         type: 'text_to_model',
         prompt,
-      }),
-    });
-    const createData = await createRes.json() as any;
-    if (createData.code !== 0) {
-      return { api, partId, glbPath, fileSizeKB: 0, durationMs: Date.now() - start, error: `Create failed: ${JSON.stringify(createData)}` };
+      };
     }
-    const taskId = createData.data.task_id;
-    console.log(`  [tripo] ${partId}: task ${taskId} created, polling...`);
 
-    // Poll for completion
-    for (let i = 0; i < MAX_POLL_ATTEMPTS; i++) {
-      await sleep(POLL_INTERVAL_MS);
-      const pollRes = await fetch(`https://api.tripo3d.ai/v2/openapi/task/${taskId}`, {
-        headers: { 'Authorization': `Bearer ${TRIPO_KEY}` },
-      });
-      const pollData = await pollRes.json() as any;
-      const status = pollData.data?.status;
-
-      if (status === 'success') {
-        const glbUrl = pollData.data.output?.pbr_model ?? pollData.data.output?.model;
-        if (!glbUrl) {
-          console.log(`  [tripo] ${partId}: success but no model URL. Full output:`, JSON.stringify(pollData.data.output ?? pollData.data, null, 2));
-          return { api, partId, glbPath, fileSizeKB: 0, durationMs: Date.now() - start, error: 'No model URL in response' };
-        }
-        const glbRes = await fetch(glbUrl);
-        const buffer = Buffer.from(await glbRes.arrayBuffer());
-        writeFileSync(glbPath, buffer);
-        const fileSizeKB = Math.round(buffer.length / 1024);
-        return { api, partId, glbPath, fileSizeKB, durationMs: Date.now() - start };
-      }
-      if (status === 'failed') {
-        return { api, partId, glbPath, fileSizeKB: 0, durationMs: Date.now() - start, error: `Task failed: ${JSON.stringify(pollData.data)}` };
-      }
-      // Still processing...
+    const genResult = await tripoCreateAndPoll(genBody, `${partId} generate`);
+    if (!genResult.ok) {
+      return { api, partId, glbPath, fileSizeKB: 0, durationMs: Date.now() - start, error: genResult.error };
     }
-    return { api, partId, glbPath, fileSizeKB: 0, durationMs: Date.now() - start, error: 'Timeout waiting for completion' };
+
+    // Step 2: Retopology via convert_model with face_limit
+    console.log(`  [tripo] ${partId}: model ready, retopologizing to ${TRIPO_FACE_LIMIT} faces...`);
+    const retopoResult = await tripoCreateAndPoll({
+      type: 'convert_model',
+      original_model_task_id: genResult.taskId,
+      format: 'glb',
+      face_limit: TRIPO_FACE_LIMIT,
+      pivot_to_center_bottom: true,
+    }, `${partId} retopo`);
+
+    if (!retopoResult.ok) {
+      // Retopo failed — fall back to downloading the full-res model
+      console.log(`  [tripo] ${partId}: retopo failed (${retopoResult.error}), downloading full-res...`);
+      const glbUrl = genResult.output?.pbr_model ?? genResult.output?.model;
+      if (!glbUrl) {
+        return { api, partId, glbPath, fileSizeKB: 0, durationMs: Date.now() - start, error: 'No model URL and retopo failed' };
+      }
+      const glbRes = await fetch(glbUrl);
+      const buffer = Buffer.from(await glbRes.arrayBuffer());
+      writeFileSync(glbPath, buffer);
+      return { api, partId, glbPath, fileSizeKB: Math.round(buffer.length / 1024), durationMs: Date.now() - start };
+    }
+
+    // Download the retopologized GLB
+    const glbUrl = retopoResult.output?.pbr_model ?? retopoResult.output?.model;
+    if (!glbUrl) {
+      console.log(`  [tripo] ${partId}: retopo output:`, JSON.stringify(retopoResult.output, null, 2));
+      return { api, partId, glbPath, fileSizeKB: 0, durationMs: Date.now() - start, error: 'No model URL in retopo output' };
+    }
+    const glbRes = await fetch(glbUrl);
+    const buffer = Buffer.from(await glbRes.arrayBuffer());
+    writeFileSync(glbPath, buffer);
+    const fileSizeKB = Math.round(buffer.length / 1024);
+    return { api, partId, glbPath, fileSizeKB, durationMs: Date.now() - start };
   } catch (err: any) {
     return { api, partId, glbPath, fileSizeKB: 0, durationMs: Date.now() - start, error: err.message };
   }
@@ -116,7 +184,7 @@ async function meshyPollUntilDone(taskId: string): Promise<any> {
   return { ok: false, error: 'Timeout waiting for completion' };
 }
 
-async function generateMeshy(partId: string, prompt: string): Promise<GenerationResult> {
+async function generateMeshy(partId: string, prompt: string, _imagePath?: string): Promise<GenerationResult> {
   const api = 'meshy';
   const outDir = join(RESULTS_DIR, api);
   mkdirSync(outDir, { recursive: true });
@@ -196,7 +264,7 @@ async function generateMeshy(partId: string, prompt: string): Promise<Generation
 
 // ── Rodin API ────────────────────────────────────────────────────
 
-async function generateRodin(partId: string, prompt: string): Promise<GenerationResult> {
+async function generateRodin(partId: string, prompt: string, _imagePath?: string): Promise<GenerationResult> {
   const api = 'rodin';
   const outDir = join(RESULTS_DIR, api);
   mkdirSync(outDir, { recursive: true });
@@ -320,9 +388,14 @@ for (const partId of BAKEOFF_PARTS) {
     continue;
   }
 
+  // Resolve image path relative to project dir
+  const imagePath = partPrompt.imagePath
+    ? join(import.meta.dir, partPrompt.imagePath)
+    : undefined;
+
   for (const api of apis) {
-    console.log(`▶ ${api.name} / ${partId}`);
-    allPromises.push(api.fn(partId, partPrompt.prompt));
+    console.log(`▶ ${api.name} / ${partId}${imagePath ? ' (image-to-3D)' : ' (text-to-3D)'}`);
+    allPromises.push(api.fn(partId, partPrompt.prompt, imagePath));
   }
 }
 

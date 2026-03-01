@@ -9,8 +9,10 @@
 export interface PartPrompt {
   /** Part ID matching schema.ts PartId */
   partId: string;
-  /** Base text prompt sent to the API */
+  /** Base text prompt sent to the API (used as fallback or guidance) */
   prompt: string;
+  /** Reference image path relative to project root (used for image-to-3D when available) */
+  imagePath?: string;
   /** Variant suffixes appended to base prompt for visual variety */
   variants: string[];
   /** Target height in scene units for normalization */
@@ -70,6 +72,7 @@ export const PART_PROMPTS: PartPrompt[] = [
   {
     partId: 'claw_small',
     prompt: 'single detached crab pincer, small curved chitin claw, one severed crushing appendage, no body no legs, standalone prop, 3D game asset, white background',
+    imagePath: 'images/claw.png',
     variants: ['small nipper', 'curved hook claw', 'serrated pincer'],
     targetHeight: 1.12,
   },

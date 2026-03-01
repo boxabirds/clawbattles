@@ -5,7 +5,9 @@
  * a channel vocoder + FM synthesis chain to create alien creature vocalizations.
  */
 
-import { CreatureVocoder } from './vocoder';
+import { CreatureVocoder, type CarrierType } from './vocoder';
+import { ShepardVocoder } from './shepard-vocoder';
+import { CylonVocoder } from './cylon-vocoder';
 import { LFOEngine } from './lfo';
 
 // -- Network --
@@ -56,6 +58,16 @@ function logCutoff(t: number): number {
   return Math.pow(2, logMin + t * (logMax - logMin));
 }
 
+/** Map 0..1 slider to 500..12000 Hz logarithmically (sibilance crossover) */
+const SIBILANCE_FREQ_MIN_HZ = 500;
+const SIBILANCE_FREQ_MAX_HZ = 12000;
+
+function logSibilanceFreq(t: number): number {
+  const logMin = Math.log2(SIBILANCE_FREQ_MIN_HZ);
+  const logMax = Math.log2(SIBILANCE_FREQ_MAX_HZ);
+  return Math.pow(2, logMin + t * (logMax - logMin));
+}
+
 const LFO_PARAMS: ParamDef[] = [
   { key: 'bodySize',        sliderId: 'slider-body-size',          min: 0,                  max: 1,                  step: 0.01, defaultVal: 0.5,    group: 'creature', format: v => v.toFixed(2) },
   { key: 'material',        sliderId: 'slider-material',           min: 0,                  max: 1,                  step: 0.01, defaultVal: 0.0,    group: 'creature', format: v => v.toFixed(2) },
@@ -63,14 +75,28 @@ const LFO_PARAMS: ParamDef[] = [
   { key: 'wetDry',          sliderId: 'slider-wetdry',             min: 0,                  max: 1,                  step: 0.01, defaultVal: 1.0,    group: 'vocoder',  format: v => `${Math.round(v * 100)}%` },
   { key: 'formantShift',    sliderId: 'slider-formant-shift',      min: 0.5,                max: 2.0,                step: 0.1,  defaultVal: 1.0,    group: 'vocoder',  format: v => `${v.toFixed(2)}x` },
   { key: 'speed',           sliderId: 'slider-speed',              min: 0.25,               max: 2.0,                step: 0.05, defaultVal: 1.0,    group: 'vocoder',  format: v => `${v.toFixed(2)}x` },
-  { key: 'filterCutoff',    sliderId: 'slider-filter-cutoff',      min: 0,                  max: 1,                  step: 0.001, defaultVal: 1,   group: 'vocoder',  format: v => formatCutoff(logCutoff(v)) },
-  { key: 'filterResonance', sliderId: 'slider-filter-resonance',   min: 0,                  max: 30,                 step: 0.1,  defaultVal: 0,      group: 'vocoder',  format: v => v.toFixed(1) },
-  { key: 'filterEnvFollow', sliderId: 'slider-filter-env-follow',  min: 0,                  max: 1,                  step: 0.01, defaultVal: 0,      group: 'vocoder',  format: v => v.toFixed(2) },
+  { key: 'filterHPCutoff',    sliderId: 'slider-filter-hp-cutoff',     min: 0,   max: 1,   step: 0.001, defaultVal: 0,   group: 'vocoder',  format: v => formatCutoff(logCutoff(v)) },
+  { key: 'filterHPResonance', sliderId: 'slider-filter-hp-resonance', min: 0,   max: 30,  step: 0.1,   defaultVal: 0,   group: 'vocoder',  format: v => v.toFixed(1) },
+  { key: 'filterCutoff',       sliderId: 'slider-filter-cutoff',      min: 0,   max: 1,   step: 0.001, defaultVal: 1,   group: 'vocoder',  format: v => formatCutoff(logCutoff(v)) },
+  { key: 'filterResonance',    sliderId: 'slider-filter-resonance',   min: 0,   max: 30,  step: 0.1,   defaultVal: 0,   group: 'vocoder',  format: v => v.toFixed(1) },
+  { key: 'filterEnvFollow',    sliderId: 'slider-filter-env-follow',  min: 0,   max: 1,   step: 0.01,  defaultVal: 0,   group: 'vocoder',  format: v => v.toFixed(2) },
 ];
+
+// -- Vocoder mode --
+type VocoderMode = 'creature' | 'shepard' | 'cylon';
+
+function activeVocoder(): CreatureVocoder | ShepardVocoder | CylonVocoder | null {
+  if (activeMode === 'creature') return creatureVocoder;
+  if (activeMode === 'shepard') return shepardVocoder;
+  return cylonVocoder;
+}
 
 // -- State --
 let audioContext: AudioContext | null = null;
-let vocoder: CreatureVocoder | null = null;
+let creatureVocoder: CreatureVocoder | null = null;
+let shepardVocoder: ShepardVocoder | null = null;
+let cylonVocoder: CylonVocoder | null = null;
+let activeMode: VocoderMode = 'creature';
 let currentAudioBuffer: AudioBuffer | null = null;
 let isPlaying = false;
 let lfoEngine: LFOEngine | null = null;
@@ -107,38 +133,44 @@ async function checkTTSHealth(): Promise<boolean> {
 // -- Audio init --
 async function initAudio(): Promise<void> {
   audioContext = new AudioContext({ latencyHint: 'interactive' });
-  vocoder = new CreatureVocoder(audioContext);
+  creatureVocoder = new CreatureVocoder(audioContext);
+  shepardVocoder = new ShepardVocoder(audioContext);
+  cylonVocoder = new CylonVocoder(audioContext);
 
-  // Set initial creature params from slider values
-  vocoder.setCreatureParams({
-    bodySize: parseFloat(($('slider-body-size') as HTMLInputElement).value),
-    material: parseFloat(($('slider-material') as HTMLInputElement).value),
-    aggression: parseFloat(($('slider-aggression') as HTMLInputElement).value),
-  });
-
-  // Start LFO engine
+  // Start LFO engine (will push initial params to active vocoder on first tick)
   lfoEngine!.start();
 }
 
 // -- LFO callback: pushes computed values to the vocoder each frame --
 function onLFOTick(values: Record<string, number>): void {
-  if (!vocoder) return;
+  const v = activeVocoder();
+  if (!v) return;
 
-  vocoder.setCreatureParams({
+  v.setCreatureParams({
     bodySize: values.bodySize,
     material: values.material,
     aggression: values.aggression,
   });
 
-  vocoder.setVocoderParams({
+  v.setVocoderParams({
     bandCount: parseInt(($('slider-bands') as HTMLInputElement).value),
+    carrierType: getActiveCarrierType(),
     wetDry: values.wetDry,
     formantShift: values.formantShift,
     speed: values.speed,
+    filterHPCutoff: logCutoff(values.filterHPCutoff),
+    filterHPResonance: values.filterHPResonance,
     filterCutoff: logCutoff(values.filterCutoff),
     filterResonance: values.filterResonance,
     filterEnvFollow: values.filterEnvFollow,
   });
+
+  // Push sibilance params to CylonVocoder when in cylon mode
+  if (activeMode === 'cylon' && v instanceof CylonVocoder) {
+    const freqT = parseFloat(($('slider-sibilance-freq') as HTMLInputElement).value);
+    const mix = parseFloat(($('slider-sibilance-mix') as HTMLInputElement).value);
+    v.setSibilanceParams(logSibilanceFreq(freqT), mix);
+  }
 
   // Update main slider value displays to show LFO-driven values
   for (const param of LFO_PARAMS) {
@@ -198,15 +230,22 @@ async function generateAndPlay(): Promise<void> {
 
 // -- Play through vocoder --
 function playVocoded(loop = false): void {
-  if (!audioContext || !vocoder || !currentAudioBuffer || isPlaying) return;
+  const v = activeVocoder();
+  if (!audioContext || !v || !currentAudioBuffer || isPlaying) return;
 
   isPlaying = true;
   setPlaybackButtonsDisabled(true);
-  const label = loop ? 'Playing looped (vocoded)...' : 'Playing (vocoded)...';
+  const MODE_LABELS: Record<VocoderMode, string> = {
+    creature: 'vocoded',
+    shepard: 'Shepard',
+    cylon: 'Cylon',
+  };
+  const modeLabel = MODE_LABELS[activeMode];
+  const label = loop ? `Playing looped (${modeLabel})...` : `Playing (${modeLabel})...`;
   $('status').textContent = label;
   $('status').style.color = '#a78bfa';
 
-  vocoder.play(currentAudioBuffer, loop, () => {
+  v.play(currentAudioBuffer, loop, () => {
     isPlaying = false;
     setPlaybackButtonsDisabled(false);
     $('status').textContent = 'Ready';
@@ -237,8 +276,9 @@ function playDry(): void {
 
 // -- Stop playback --
 function stopPlayback(): void {
-  if (!vocoder) return;
-  vocoder.stop();
+  const v = activeVocoder();
+  if (!v) return;
+  v.stop();
   isPlaying = false;
   setPlaybackButtonsDisabled(false);
   $('status').textContent = 'Stopped';
@@ -268,6 +308,403 @@ function enablePlaybackControls(enabled: boolean): void {
   ($('btn-play-looped') as HTMLButtonElement).disabled = !enabled;
   ($('btn-play-dry') as HTMLButtonElement).disabled = !enabled;
   ($('btn-stop') as HTMLButtonElement).disabled = !enabled;
+  ($('btn-save-audio') as HTMLButtonElement).disabled = !enabled;
+}
+
+// -- Carrier type --
+
+function getActiveCarrierType(): CarrierType {
+  const active = document.querySelector('.carrier-btn.active');
+  return (active?.getAttribute('data-carrier') as CarrierType) ?? 'fm';
+}
+
+function setCarrierType(type: CarrierType): void {
+  document.querySelectorAll('.carrier-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.getAttribute('data-carrier') === type);
+  });
+  updateModeUI();
+}
+
+// -- Vocoder mode switch --
+
+// -- Per-mode slider labels --
+const MODE_LABELS: Record<VocoderMode, Record<string, string>> = {
+  creature: {
+    'label-body-size': 'Body Size',
+    'label-material': 'Material',
+    'label-aggression': 'Aggression',
+  },
+  shepard: {
+    'label-body-size': 'Center Freq',
+    'label-material': 'Resonance',
+    'label-aggression': 'Rise Rate',
+  },
+  cylon: {
+    'label-body-size': 'Carrier Pitch',
+    'label-material': 'Phaser Depth',
+    'label-aggression': 'Noise Blend',
+  },
+};
+
+/** Hint text for creature params. Depends on both vocoder mode and carrier type. */
+const SHEPARD_HINTS: Record<string, [string, string]> = {
+  'hint-body-size':  ['High center (4kHz)', 'Low center (200Hz)'],
+  'hint-material':   ['Wide / soft resonance', 'Tight / sharp resonance'],
+  'hint-aggression': ['Slow rise (0.1 oct/s)', 'Fast rise (2 oct/s)'],
+};
+
+const CYLON_HINTS: Record<string, [string, string]> = {
+  'hint-body-size':  ['High pitch (600 Hz)', 'Low pitch (60 Hz)'],
+  'hint-material':   ['No phaser', 'Deep dynamic shimmer'],
+  'hint-aggression': ['Pure sawtooth', 'Pure noise (whisper)'],
+};
+
+const CREATURE_HINTS: Record<CarrierType, Record<string, [string, string]>> = {
+  fm: {
+    'hint-body-size':  ['Small (high pitch)', 'Large (low pitch)'],
+    'hint-material':   ['Organic / Chitin', 'Metallic'],
+    'hint-aggression': ['Calm (smooth)', 'Aggressive (harsh)'],
+  },
+  saw: {
+    'hint-body-size':  ['Small (high pitch)', 'Large (low pitch)'],
+    'hint-material':   ['(no effect)', '(no effect)'],
+    'hint-aggression': ['(no effect)', '(no effect)'],
+  },
+  square: {
+    'hint-body-size':  ['Small (high pitch)', 'Large (low pitch)'],
+    'hint-material':   ['(no effect)', '(no effect)'],
+    'hint-aggression': ['(no effect)', '(no effect)'],
+  },
+  noise: {
+    'hint-body-size':  ['(no effect)', '(no effect)'],
+    'hint-material':   ['(no effect)', '(no effect)'],
+    'hint-aggression': ['(no effect)', '(no effect)'],
+  },
+};
+
+function updateModeUI(): void {
+  // Update slider labels per mode
+  const labels = MODE_LABELS[activeMode];
+  for (const [id, text] of Object.entries(labels)) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+
+  // Update hint text
+  let hints: Record<string, [string, string]>;
+  if (activeMode === 'shepard') hints = SHEPARD_HINTS;
+  else if (activeMode === 'cylon') hints = CYLON_HINTS;
+  else hints = CREATURE_HINTS[getActiveCarrierType()];
+
+  for (const [id, [lo, hi]] of Object.entries(hints)) {
+    const el = $(id);
+    if (el) {
+      const spans = el.querySelectorAll('span');
+      if (spans.length >= 2) {
+        spans[0].textContent = lo;
+        spans[1].textContent = hi;
+      }
+    }
+  }
+
+  // Show/hide carrier type selector — only relevant in creature mode
+  const carrierPanel = document.getElementById('carrier-type-panel');
+  if (carrierPanel) {
+    carrierPanel.style.display = activeMode === 'creature' ? '' : 'none';
+  }
+
+  // Show/hide sibilance panel — only relevant in cylon mode
+  const sibilancePanel = document.getElementById('cylon-sibilance-panel');
+  if (sibilancePanel) {
+    sibilancePanel.style.display = activeMode === 'cylon' ? '' : 'none';
+  }
+}
+
+function setVocoderMode(mode: VocoderMode): void {
+  if (mode === activeMode) return;
+
+  // Stop playback on old vocoder
+  activeVocoder()?.stop();
+  isPlaying = false;
+  setPlaybackButtonsDisabled(false);
+
+  activeMode = mode;
+
+  $('btn-mode-creature').classList.toggle('active', mode === 'creature');
+  $('btn-mode-shepard').classList.toggle('active', mode === 'shepard');
+  $('btn-mode-cylon').classList.toggle('active', mode === 'cylon');
+
+  updateModeUI();
+}
+
+// -- Save / Load --
+
+const CONFIG_VERSION = 1;
+
+interface SavedConfig {
+  version: number;
+  vocoderMode: VocoderMode;
+  carrierType: CarrierType;
+  text: string;
+  voice: string;
+  bandCount: number;
+  sibilanceFreq?: number;  // 0..1 slider position
+  sibilanceMix?: number;
+  params: Record<string, number>;
+  lfos: Record<string, { min: number; max: number; freq: number }>;
+}
+
+function gatherConfig(): SavedConfig {
+  const params: Record<string, number> = {};
+  for (const p of LFO_PARAMS) {
+    params[p.key] = parseFloat(($(p.sliderId) as HTMLInputElement).value);
+  }
+
+  const lfos: Record<string, { min: number; max: number; freq: number }> = {};
+  for (const p of LFO_PARAMS) {
+    const row = $(`lfo-${p.key}`);
+    lfos[p.key] = {
+      min: parseFloat(row.querySelector<HTMLInputElement>('[data-lfo="min"]')!.value),
+      max: parseFloat(row.querySelector<HTMLInputElement>('[data-lfo="max"]')!.value),
+      freq: parseFloat(row.querySelector<HTMLInputElement>('[data-lfo="freq"]')!.value),
+    };
+  }
+
+  return {
+    version: CONFIG_VERSION,
+    vocoderMode: activeMode,
+    carrierType: getActiveCarrierType(),
+    text: ($('text-input') as HTMLTextAreaElement).value,
+    voice: ($('voice-select') as HTMLSelectElement).value,
+    bandCount: parseInt(($('slider-bands') as HTMLInputElement).value),
+    sibilanceFreq: parseFloat(($('slider-sibilance-freq') as HTMLInputElement).value),
+    sibilanceMix: parseFloat(($('slider-sibilance-mix') as HTMLInputElement).value),
+    params,
+    lfos,
+  };
+}
+
+function applyConfig(config: SavedConfig): void {
+  setVocoderMode(config.vocoderMode ?? 'creature');
+  setCarrierType(config.carrierType ?? 'fm');
+
+  ($('text-input') as HTMLTextAreaElement).value = config.text;
+  ($('voice-select') as HTMLSelectElement).value = config.voice;
+
+  const bandSlider = $('slider-bands') as HTMLInputElement;
+  bandSlider.value = String(config.bandCount);
+  $('slider-bands-val').textContent = String(config.bandCount);
+
+  if (config.sibilanceFreq !== undefined) {
+    const sf = $('slider-sibilance-freq') as HTMLInputElement;
+    sf.value = String(config.sibilanceFreq);
+    sf.dispatchEvent(new Event('input'));
+  }
+  if (config.sibilanceMix !== undefined) {
+    const sm = $('slider-sibilance-mix') as HTMLInputElement;
+    sm.value = String(config.sibilanceMix);
+    sm.dispatchEvent(new Event('input'));
+  }
+
+  for (const p of LFO_PARAMS) {
+    if (config.params[p.key] !== undefined) {
+      const slider = $(p.sliderId) as HTMLInputElement;
+      slider.value = String(config.params[p.key]);
+      slider.dispatchEvent(new Event('input'));
+    }
+  }
+
+  for (const p of LFO_PARAMS) {
+    const lfo = config.lfos?.[p.key];
+    if (!lfo) continue;
+    const row = $(`lfo-${p.key}`);
+    for (const [attr, val] of Object.entries(lfo)) {
+      const slider = row.querySelector<HTMLInputElement>(`[data-lfo="${attr}"]`);
+      if (slider) {
+        slider.value = String(val);
+        slider.dispatchEvent(new Event('input'));
+      }
+    }
+  }
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function pickFile(accept: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) { reject(new Error('No file selected')); return; }
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(file);
+    };
+    input.click();
+  });
+}
+
+function saveConfig(): void {
+  const config = gatherConfig();
+  const json = JSON.stringify(config, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  downloadBlob(blob, `vocoder-config-${Date.now()}.json`);
+}
+
+async function loadConfig(): Promise<void> {
+  try {
+    const json = await pickFile('.json');
+    const config = JSON.parse(json) as SavedConfig;
+    if (config.version !== CONFIG_VERSION) {
+      $('status').textContent = `Unknown config version: ${config.version}`;
+      $('status').style.color = '#f87171';
+      return;
+    }
+    applyConfig(config);
+    $('status').textContent = 'Config loaded';
+    $('status').style.color = '#4ade80';
+  } catch (err) {
+    if ((err as Error).message === 'No file selected') return;
+    $('status').textContent = `Load error: ${err}`;
+    $('status').style.color = '#f87171';
+  }
+}
+
+// -- WAV export --
+
+/** Tail padding so envelope followers can ring out after source ends */
+const OFFLINE_TAIL_S = 0.5;
+const WAV_BITS_PER_SAMPLE = 16;
+const WAV_HEADER_BYTES = 44;
+
+async function renderOffline(): Promise<AudioBuffer> {
+  if (!currentAudioBuffer) throw new Error('No audio buffer');
+
+  const speed = parseFloat(($('slider-speed') as HTMLInputElement).value);
+  const duration = currentAudioBuffer.duration / speed + OFFLINE_TAIL_S;
+  const sampleRate = currentAudioBuffer.sampleRate;
+  const numFrames = Math.ceil(duration * sampleRate);
+
+  const offlineCtx = new OfflineAudioContext(2, numFrames, sampleRate);
+  const ctx = offlineCtx as unknown as AudioContext;
+  let offlineVocoder: CreatureVocoder | ShepardVocoder | CylonVocoder;
+  if (activeMode === 'creature') offlineVocoder = new CreatureVocoder(ctx);
+  else if (activeMode === 'shepard') offlineVocoder = new ShepardVocoder(ctx);
+  else offlineVocoder = new CylonVocoder(ctx);
+
+  offlineVocoder.setCreatureParams({
+    bodySize: parseFloat(($('slider-body-size') as HTMLInputElement).value),
+    material: parseFloat(($('slider-material') as HTMLInputElement).value),
+    aggression: parseFloat(($('slider-aggression') as HTMLInputElement).value),
+  });
+
+  offlineVocoder.setVocoderParams({
+    bandCount: parseInt(($('slider-bands') as HTMLInputElement).value),
+    carrierType: getActiveCarrierType(),
+    wetDry: parseFloat(($('slider-wetdry') as HTMLInputElement).value),
+    formantShift: parseFloat(($('slider-formant-shift') as HTMLInputElement).value),
+    speed: parseFloat(($('slider-speed') as HTMLInputElement).value),
+    filterHPCutoff: logCutoff(parseFloat(($('slider-filter-hp-cutoff') as HTMLInputElement).value)),
+    filterHPResonance: parseFloat(($('slider-filter-hp-resonance') as HTMLInputElement).value),
+    filterCutoff: logCutoff(parseFloat(($('slider-filter-cutoff') as HTMLInputElement).value)),
+    filterResonance: parseFloat(($('slider-filter-resonance') as HTMLInputElement).value),
+    filterEnvFollow: parseFloat(($('slider-filter-env-follow') as HTMLInputElement).value),
+  });
+
+  // Push sibilance params for Cylon offline render
+  if (activeMode === 'cylon' && offlineVocoder instanceof CylonVocoder) {
+    const freqT = parseFloat(($('slider-sibilance-freq') as HTMLInputElement).value);
+    const mix = parseFloat(($('slider-sibilance-mix') as HTMLInputElement).value);
+    offlineVocoder.setSibilanceParams(logSibilanceFreq(freqT), mix);
+  }
+
+  offlineVocoder.play(currentAudioBuffer, false, undefined, duration);
+  return offlineCtx.startRendering();
+}
+
+function writeWAVString(view: DataView, offset: number, str: string): void {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
+}
+
+function encodeWAV(buffer: AudioBuffer): ArrayBuffer {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const bytesPerSample = WAV_BITS_PER_SAMPLE / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const numFrames = buffer.length;
+  const dataSize = numFrames * blockAlign;
+
+  const wav = new ArrayBuffer(WAV_HEADER_BYTES + dataSize);
+  const view = new DataView(wav);
+
+  writeWAVString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeWAVString(view, 8, 'WAVE');
+
+  writeWAVString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);  // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, WAV_BITS_PER_SAMPLE, true);
+
+  writeWAVString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  const channels: Float32Array[] = [];
+  for (let ch = 0; ch < numChannels; ch++) {
+    channels.push(buffer.getChannelData(ch));
+  }
+
+  let offset = WAV_HEADER_BYTES;
+  const MAX_POSITIVE = 0x7FFF;
+  const MAX_NEGATIVE = 0x8000;
+  for (let i = 0; i < numFrames; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const sample = Math.max(-1, Math.min(1, channels[ch][i]));
+      view.setInt16(offset, sample < 0 ? sample * MAX_NEGATIVE : sample * MAX_POSITIVE, true);
+      offset += bytesPerSample;
+    }
+  }
+
+  return wav;
+}
+
+async function saveAudio(): Promise<void> {
+  if (!currentAudioBuffer) return;
+
+  const statusEl = $('status');
+  statusEl.textContent = 'Rendering audio offline...';
+  statusEl.style.color = '#fbbf24';
+
+  try {
+    const rendered = await renderOffline();
+    const wav = encodeWAV(rendered);
+    const blob = new Blob([wav], { type: 'audio/wav' });
+    const durationSec = rendered.duration.toFixed(1);
+    const sizeMB = (wav.byteLength / (1024 * 1024)).toFixed(2);
+    downloadBlob(blob, `creature-voice-${Date.now()}.wav`);
+    statusEl.textContent = `Saved ${durationSec}s WAV (${sizeMB} MB)`;
+    statusEl.style.color = '#4ade80';
+  } catch (err) {
+    statusEl.textContent = `Render error: ${err}`;
+    statusEl.style.color = '#f87171';
+    console.error('Save audio failed:', err);
+  }
 }
 
 // -- Generate LFO row DOM for a parameter --
@@ -412,6 +849,37 @@ function setupUI(): void {
 
   // Wire LFO slider events
   wireLFOSliders();
+
+  // Vocoder mode toggle
+  $('btn-mode-creature').addEventListener('click', () => setVocoderMode('creature'));
+  $('btn-mode-shepard').addEventListener('click', () => setVocoderMode('shepard'));
+  $('btn-mode-cylon').addEventListener('click', () => setVocoderMode('cylon'));
+
+  // Carrier type buttons
+  document.querySelectorAll('.carrier-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      setCarrierType(btn.getAttribute('data-carrier') as CarrierType);
+    });
+  });
+
+  // Sibilance sliders (Cylon mode only)
+  const sibilanceFreqSlider = $('slider-sibilance-freq') as HTMLInputElement;
+  const sibilanceFreqVal = $('slider-sibilance-freq-val');
+  sibilanceFreqSlider.addEventListener('input', () => {
+    const t = parseFloat(sibilanceFreqSlider.value);
+    sibilanceFreqVal.textContent = formatCutoff(logSibilanceFreq(t));
+  });
+
+  const sibilanceMixSlider = $('slider-sibilance-mix') as HTMLInputElement;
+  const sibilanceMixVal = $('slider-sibilance-mix-val');
+  sibilanceMixSlider.addEventListener('input', () => {
+    sibilanceMixVal.textContent = `${Math.round(parseFloat(sibilanceMixSlider.value) * 100)}%`;
+  });
+
+  // Save / Load buttons
+  $('btn-save-config').addEventListener('click', saveConfig);
+  $('btn-load-config').addEventListener('click', loadConfig);
+  $('btn-save-audio').addEventListener('click', saveAudio);
 
   // Keyboard shortcut: Enter to generate
   ($('text-input') as HTMLTextAreaElement).addEventListener('keydown', (e) => {

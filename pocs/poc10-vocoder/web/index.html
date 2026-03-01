@@ -199,6 +199,71 @@
     }
     #btn-stop:hover:not(:disabled) { background: rgba(248, 113, 113, 0.3); }
 
+    /* Save / Load buttons */
+    #btn-save-config {
+      background: rgba(96, 165, 250, 0.2);
+      border: 1px solid rgba(96, 165, 250, 0.5);
+      color: #60a5fa;
+    }
+    #btn-save-config:hover:not(:disabled) { background: rgba(96, 165, 250, 0.35); }
+
+    #btn-load-config {
+      background: rgba(45, 212, 191, 0.2);
+      border: 1px solid rgba(45, 212, 191, 0.5);
+      color: #2dd4bf;
+    }
+    #btn-load-config:hover:not(:disabled) { background: rgba(45, 212, 191, 0.35); }
+
+    #btn-save-audio {
+      background: rgba(167, 139, 250, 0.2);
+      border: 1px solid rgba(167, 139, 250, 0.5);
+      color: #a78bfa;
+    }
+    #btn-save-audio:hover:not(:disabled) { background: rgba(167, 139, 250, 0.35); }
+
+    /* Mode toggle */
+    .mode-toggle {
+      display: flex;
+      gap: 0;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    .mode-btn {
+      flex: 1;
+      padding: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      background: rgba(255, 255, 255, 0.03);
+      color: #888;
+      transition: all 0.15s;
+    }
+    .mode-btn:hover:not(.active) {
+      background: rgba(255, 255, 255, 0.08);
+      color: #bbb;
+    }
+    .mode-btn.active, .carrier-btn.active {
+      background: rgba(108, 99, 255, 0.25);
+      color: #a78bfa;
+    }
+    .carrier-btn {
+      flex: 1;
+      padding: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      background: rgba(255, 255, 255, 0.03);
+      color: #888;
+      transition: all 0.15s;
+    }
+    .carrier-btn:hover:not(.active) {
+      background: rgba(255, 255, 255, 0.08);
+      color: #bbb;
+    }
+
     /* Sliders */
     .slider-row {
       display: flex;
@@ -366,30 +431,70 @@
       </div>
     </div>
 
+    <!-- Vocoder Mode -->
+    <div class="panel">
+      <div class="panel-title">Vocoder Mode</div>
+      <div class="mode-toggle">
+        <button class="mode-btn active" id="btn-mode-creature">FM Creature</button>
+        <button class="mode-btn" id="btn-mode-shepard">Shepard's Tone</button>
+        <button class="mode-btn" id="btn-mode-cylon">Cylon</button>
+      </div>
+    </div>
+
+    <!-- Sibilance Crossover (only visible in Cylon mode) -->
+    <div class="panel" id="cylon-sibilance-panel" style="display: none;">
+      <div class="panel-title">Sibilance Passthrough</div>
+
+      <div class="slider-row">
+        <span class="slider-label">Crossover</span>
+        <input type="range" id="slider-sibilance-freq" min="0" max="1" step="0.001" value="0.63">
+        <span class="slider-val" id="slider-sibilance-freq-val">4.0k</span>
+      </div>
+      <div class="slider-hint"><span>500 Hz (full speech)</span><span>12 kHz (hiss only)</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Mix Level</span>
+        <input type="range" id="slider-sibilance-mix" min="0" max="1" step="0.01" value="0">
+        <span class="slider-val" id="slider-sibilance-mix-val">0%</span>
+      </div>
+      <div class="slider-hint"><span>Off (vocoder only)</span><span>Full (dry speech on top)</span></div>
+    </div>
+
+    <!-- Carrier Type (only visible in FM Creature mode) -->
+    <div class="panel" id="carrier-type-panel">
+      <div class="panel-title">Carrier Type</div>
+      <div class="mode-toggle">
+        <button class="carrier-btn active" data-carrier="fm">FM</button>
+        <button class="carrier-btn" data-carrier="saw">Sawtooth</button>
+        <button class="carrier-btn" data-carrier="square">Square</button>
+        <button class="carrier-btn" data-carrier="noise">Noise</button>
+      </div>
+    </div>
+
     <!-- Creature Properties -->
     <div class="panel">
       <div class="panel-title">Creature Properties</div>
 
       <div class="slider-row">
-        <span class="slider-label">Body Size</span>
+        <span class="slider-label" id="label-body-size">Body Size</span>
         <input type="range" id="slider-body-size" min="0" max="1" step="0.01" value="0.5">
         <span class="slider-val" id="slider-body-size-val">0.50</span>
       </div>
-      <div class="slider-hint"><span>Small (high pitch)</span><span>Large (low pitch)</span></div>
+      <div class="slider-hint" id="hint-body-size"><span>Small (high pitch)</span><span>Large (low pitch)</span></div>
 
       <div class="slider-row">
-        <span class="slider-label">Material</span>
+        <span class="slider-label" id="label-material">Material</span>
         <input type="range" id="slider-material" min="0" max="1" step="0.01" value="0.0">
         <span class="slider-val" id="slider-material-val">0.00</span>
       </div>
-      <div class="slider-hint"><span>Organic / Chitin</span><span>Metallic</span></div>
+      <div class="slider-hint" id="hint-material"><span>Organic / Chitin</span><span>Metallic</span></div>
 
       <div class="slider-row">
-        <span class="slider-label">Aggression</span>
+        <span class="slider-label" id="label-aggression">Aggression</span>
         <input type="range" id="slider-aggression" min="0" max="1" step="0.01" value="0.3">
         <span class="slider-val" id="slider-aggression-val">0.30</span>
       </div>
-      <div class="slider-hint"><span>Calm (smooth)</span><span>Aggressive (harsh)</span></div>
+      <div class="slider-hint" id="hint-aggression"><span>Calm (smooth)</span><span>Aggressive (harsh)</span></div>
     </div>
 
     <!-- Vocoder Controls -->
@@ -427,17 +532,31 @@
 
     <!-- Output Filter -->
     <div class="panel">
-      <div class="panel-title">Output Filter (4-pole)</div>
+      <div class="panel-title">Output Filter</div>
 
       <div class="slider-row">
-        <span class="slider-label">Cutoff</span>
+        <span class="slider-label">HP Cutoff</span>
+        <input type="range" id="slider-filter-hp-cutoff" min="0" max="1" step="0.001" value="0">
+        <span class="slider-val" id="slider-filter-hp-cutoff-val">20</span>
+      </div>
+      <div class="slider-hint"><span>20 Hz</span><span>20 kHz</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">HP Resonance</span>
+        <input type="range" id="slider-filter-hp-resonance" min="0" max="30" step="0.1" value="0">
+        <span class="slider-val" id="slider-filter-hp-resonance-val">0.0</span>
+      </div>
+      <div class="slider-hint"><span>Flat</span><span>Resonant</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">LP Cutoff</span>
         <input type="range" id="slider-filter-cutoff" min="0" max="1" step="0.001" value="1">
         <span class="slider-val" id="slider-filter-cutoff-val">20k</span>
       </div>
       <div class="slider-hint"><span>20 Hz</span><span>20 kHz</span></div>
 
       <div class="slider-row">
-        <span class="slider-label">Resonance</span>
+        <span class="slider-label">LP Resonance</span>
         <input type="range" id="slider-filter-resonance" min="0" max="30" step="0.1" value="0">
         <span class="slider-val" id="slider-filter-resonance-val">0.0</span>
       </div>
@@ -449,6 +568,16 @@
         <span class="slider-val" id="slider-filter-env-follow-val">0.00</span>
       </div>
       <div class="slider-hint"><span>Off</span><span>Full</span></div>
+    </div>
+
+    <!-- Save / Load -->
+    <div class="panel">
+      <div class="panel-title">Save / Load</div>
+      <div class="playback-row">
+        <button class="play-btn" id="btn-save-config">Save Config</button>
+        <button class="play-btn" id="btn-load-config">Load Config</button>
+        <button class="play-btn" id="btn-save-audio" disabled>Save Audio</button>
+      </div>
     </div>
 
     <div class="hints">

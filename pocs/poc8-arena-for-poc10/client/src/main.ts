@@ -337,6 +337,9 @@ function tryBuildCreature(creatureIdx: number): void {
   const cmesh = buildCreatureMesh(parts, creatureIdx, color, cssColor, row.name);
   scene.add(cmesh.group);
 
+  // Register creature's synth profile from its part composition
+  sound.registerCreature(creatureIdx, parts.map((p) => p.partId));
+
   const visual: CreatureVisual = {
     mesh: cmesh,
     serverX: row.posX,
@@ -773,8 +776,6 @@ function updateStartButton(): void {
 
 startBtn.addEventListener('click', () => {
   if (!conn || selectedDesignIds.length !== CREATURES_PER_MATCH) return;
-  // Init sound on user gesture (AudioContext requires it)
-  sound.init();
   launchMatch(selectedDesignIds);
 });
 
@@ -826,8 +827,6 @@ btnAutopan.addEventListener('click', () => {
 });
 
 btnRestart.addEventListener('click', () => {
-  // Init sound on user gesture (in case first match was auto-started)
-  sound.init();
   suppressFinishOverlay = true;
   autoStart(true);
 });
@@ -977,7 +976,7 @@ function connectToSTDB(token?: string): void {
       triggerDeathFlash(scene, visual.mesh.group.position, getTeamHex(visual.teamIdx));
       triggerShake(SHAKE_LARGE);
       directorEvent('kill', row.creatureIdx);
-      sound.onCreatureDeath();
+      sound.onCreatureDeath(row.creatureIdx);
     }
   });
 
@@ -1021,7 +1020,7 @@ function connectToSTDB(token?: string): void {
         if (attacker && target) {
           triggerLunge(attacker.mesh.group, target.mesh.group.position);
         }
-        sound.onAttackSwing();
+        sound.onAttackSwing(row.creatureIdx);
       } catch { /* ignore */ }
     } else if (row.eventType === 'contact_hit') {
       try {
@@ -1038,7 +1037,8 @@ function connectToSTDB(token?: string): void {
         if (data.damage > HIGH_DAMAGE_THRESHOLD) {
           directorEvent('hit', row.creatureIdx, { damage: data.damage });
         }
-        sound.onContactHit();
+        // Sound from the attacker's perspective (their body hits)
+        sound.onContactHit(attackerIdx);
       } catch { /* ignore */ }
     } else if (row.eventType === 'part_lost') {
       try {
@@ -1048,7 +1048,7 @@ function connectToSTDB(token?: string): void {
           row.creatureIdx,
         );
         directorEvent('part_lost', row.creatureIdx);
-        sound.onPartLost();
+        sound.onPartLost(row.creatureIdx);
       } catch { /* ignore */ }
     }
   });
@@ -1133,8 +1133,9 @@ window.addEventListener('resize', () => {
 async function boot(): Promise<void> {
   await renderer.init();
 
-  // Init sound on any user gesture (covers auto-start case where no button was clicked)
-  document.addEventListener('click', () => sound.init(), { once: true });
+  // Sound init: explicit button click
+  const btnSound = document.getElementById('btn-sound')!;
+  btnSound.addEventListener('click', () => sound.init());
 
   showSetupPanel();
   connectToSTDB(localStorage.getItem(AUTH_TOKEN_KEY) || undefined);

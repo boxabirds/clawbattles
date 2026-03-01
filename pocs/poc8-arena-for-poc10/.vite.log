@@ -1,38 +1,6 @@
 
-  VITE v6.4.1  ready in 132 ms
+  VITE v6.4.1  ready in 172 ms
 
   ➜  Local:   http://localhost:3006/
   ➜  Network: http://192.168.5.2:3006/
   ➜  Network: http://100.86.117.127:3006/
-04:54:03 [vite] (client) page reload index.html
-04:54:24 [vite] (client) page reload src/audio/sound-manager.ts
-05:01:42 [vite] (client) page reload src/main.ts
-05:01:45 [vite] (client) page reload src/main.ts
-05:01:53 [vite] (client) page reload src/main.ts
-05:03:03 [vite] (client) page reload src/main.ts
-05:03:04 [vite] (client) ✨ new dependencies optimized: three/webgpu
-05:03:04 [vite] (client) ✨ optimized dependencies changed. reloading
-05:03:23 [vite] (client) page reload src/effects.ts
-05:03:24 [vite] (client) page reload src/camera-director.ts
-05:03:25 [vite] (client) page reload src/creature-builder.ts
-05:04:24 [vite] vite.config.ts changed, restarting server...
-05:04:24 [vite] (client) Re-optimizing dependencies because vite config has changed
-05:04:24 [vite] server restarted.
-node:internal/fs/promises:638
-  return new FileHandle(await PromisePrototypeThen(
-                        ^
-
-Error: ENOTDIR: not a directory, open '/Users/julian/expts/game-1/pocs/poc8-arena-for-poc10/client/node_modules/three/build/three.webgpu.js/examples/jsm/controls/OrbitControls.js'
-    at async open (node:internal/fs/promises:638:25)
-    at async Object.readFile (node:internal/fs/promises:1238:14)
-    at async extractExportsData (file:///Users/julian/expts/game-1/pocs/poc8-arena-for-poc10/client/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:15346:24)
-    at async file:///Users/julian/expts/game-1/pocs/poc8-arena-for-poc10/client/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:15092:27
-    at async Promise.all (index 1)
-    at async prepareEsbuildOptimizerRun (file:///Users/julian/expts/game-1/pocs/poc8-arena-for-poc10/client/node_modules/vite/dist/node/chunks/dep-D4NMHUTW.js:15089:3) {
-  errno: -20,
-  code: 'ENOTDIR',
-  syscall: 'open',
-  path: '/Users/julian/expts/game-1/pocs/poc8-arena-for-poc10/client/node_modules/three/build/three.webgpu.js/examples/jsm/controls/OrbitControls.js'
-}
-
-Node.js v22.12.0

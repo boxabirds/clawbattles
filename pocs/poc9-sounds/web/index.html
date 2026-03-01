@@ -136,6 +136,13 @@
     }
     .action-btn:disabled { opacity: 0.3; cursor: default; }
 
+    .saveload-btn {
+      background: rgba(108, 99, 255, 0.15);
+      border: 1px solid rgba(108, 99, 255, 0.4);
+      color: #a89eff;
+    }
+    .saveload-btn:hover { background: rgba(108, 99, 255, 0.3); }
+
     #btn-stress {
       background: rgba(248, 113, 113, 0.15);
       border: 1px solid rgba(248, 113, 113, 0.4);
@@ -322,6 +329,17 @@
         <span class="slider-val" id="slider-aggression-val">0.30</span>
       </div>
       <div class="slider-hint"><span>Calm (smooth)</span><span>Aggressive (harsh)</span></div>
+    </div>
+
+    <!-- Save / Load -->
+    <div class="panel">
+      <div class="panel-title">Save / Load</div>
+      <div class="action-row">
+        <button class="action-btn saveload-btn" id="btn-save-config">Save Config</button>
+        <button class="action-btn saveload-btn" id="btn-load-config">Load Config…</button>
+        <button class="action-btn saveload-btn" id="btn-save-audio">Save Audio…</button>
+      </div>
+      <input type="file" id="file-load-config" accept=".json" style="display: none;">
     </div>
 
     <!-- Telemetry -->

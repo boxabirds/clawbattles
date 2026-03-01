@@ -1,0 +1,15 @@
+services:
+  kitten-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5100:5100"
+    restart: unless-stopped
+    environment:
+      - HF_HOME=/app/hf_cache
+    volumes:
+      - hf_cache:/app/hf_cache
+
+volumes:
+  hf_cache:

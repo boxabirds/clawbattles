@@ -1,0 +1,16 @@
+{
+  "name": "glb-pipeline",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bakeoff": "bun bakeoff.ts",
+    "generate": "bun generate.ts",
+    "normalize": "bun normalize.ts"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.3.0",
+    "@gltf-transform/extensions": "^4.3.0",
+    "@gltf-transform/functions": "^4.3.0",
+    "three": "^0.170.0"
+  }
+}

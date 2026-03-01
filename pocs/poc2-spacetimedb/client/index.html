@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POC 2: SpacetimeDB 2.0 Connectivity Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      background: #0a0a0f;
+      color: #e0e0e0;
+      display: flex;
+      height: 100vh;
+    }
+
+    /* --- Left panel: canvas --- */
+    #canvas-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 12px;
+    }
+
+    canvas {
+      flex: 1;
+      background: #12121a;
+      border: 1px solid #333;
+      border-radius: 4px;
+      cursor: crosshair;
+    }
+
+    /* --- Right panel: info + log --- */
+    #info-panel {
+      width: 360px;
+      display: flex;
+      flex-direction: column;
+      padding: 12px;
+      gap: 12px;
+      border-left: 1px solid #333;
+      overflow: hidden;
+    }
+
+    h1 {
+      font-size: 14px;
+      color: #7b68ee;
+      letter-spacing: 1px;
+    }
+
+    .status-row {
+      display: flex;
+      gap: 12px;
+      font-size: 12px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 4px;
+    }
+
+    .dot-green { background: #4caf50; }
+    .dot-red { background: #f44336; }
+    .dot-yellow { background: #ff9800; }
+
+    .stat-box {
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-size: 12px;
+    }
+
+    .stat-box strong { color: #7b68ee; }
+
+    #instructions {
+      font-size: 11px;
+      color: #888;
+      line-height: 1.6;
+    }
+
+    #event-log {
+      flex: 1;
+      overflow-y: auto;
+      background: #0d0d14;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 8px;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .log-entry { border-bottom: 1px solid #1a1a2e; padding: 2px 0; }
+    .log-connect { color: #4caf50; }
+    .log-spawn { color: #2196f3; }
+    .log-move { color: #ff9800; }
+    .log-combat { color: #f44336; }
+    .log-tick { color: #666; }
+    .log-error { color: #f44336; font-weight: bold; }
+    .log-info { color: #888; }
+
+    #cli-fallback {
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 12px;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    #cli-fallback code {
+      display: block;
+      background: #0d0d14;
+      padding: 8px;
+      margin: 4px 0;
+      border-radius: 2px;
+      white-space: pre;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+
+<div id="canvas-panel">
+  <canvas id="world"></canvas>
+</div>
+
+<div id="info-panel">
+  <h1>POC 2: SPACETIMEDB 2.0</h1>
+
+  <div class="status-row">
+    <span><span class="status-dot dot-red" id="conn-dot"></span>
+    <span id="conn-status">Disconnected</span></span>
+  </div>
+
+  <div class="stat-box">
+    <strong>Players:</strong> <span id="player-count">0</span> |
+    <strong>Creatures:</strong> <span id="creature-count">0</span> |
+    <strong>Ticks:</strong> <span id="tick-count">0</span>
+  </div>
+
+  <div id="instructions">
+    <strong>Controls:</strong><br>
+    Click canvas = spawn creature at position<br>
+    Right-click creature = select it (shows highlight)<br>
+    Right-click elsewhere = move selected creature<br>
+    <br>
+    <strong>Requires:</strong> Generated client bindings.<br>
+    See README.md for setup.
+  </div>
+
+  <div id="cli-fallback">
+    <strong>CLI Verification (no bindings needed):</strong>
+    <code># Spawn a creature at (100, 100)
+spacetime call poc2 spawn_creature 100.0 100.0
+
+# Query players
+spacetime sql poc2 'SELECT * FROM player'
+
+# Query creatures
+spacetime sql poc2 'SELECT * FROM creature'
+
+# Move creature (id=1) to (200, 200)
+spacetime call poc2 move_creature 1 200.0 200.0
+
+# Watch logs for tick_world activity
+spacetime logs poc2 -f</code>
+  </div>
+
+  <div id="event-log"></div>
+</div>
+
+<script type="module">
+  // ---------------------------------------------------------------------------
+  // Constants
+  // ---------------------------------------------------------------------------
+  const CANVAS_BG = '#12121a';
+  const GRID_COLOR = '#1a1a2e';
+  const GRID_STEP = 50;
+  const CREATURE_RADIUS = 8;
+  const WORLD_BOUND = 500;
+  const MAX_LOG_ENTRIES = 200;
+
+  // ---------------------------------------------------------------------------
+  // State
+  // ---------------------------------------------------------------------------
+  let conn = null;
+  let myIdentity = null;
+  let selectedCreatureId = null;
+  let tickCount = 0;
+
+  // Local mirror of subscribed tables (populated by SDK callbacks)
+  const players = new Map();   // identity hex -> player row
+  const creatures = new Map(); // id (bigint) -> creature row
+
+  // ---------------------------------------------------------------------------
+  // DOM refs
+  // ---------------------------------------------------------------------------
+  const canvas = document.getElementById('world');
+  const ctx2d = canvas.getContext('2d');
+  const connDot = document.getElementById('conn-dot');
+  const connStatus = document.getElementById('conn-status');
+  const playerCountEl = document.getElementById('player-count');
+  const creatureCountEl = document.getElementById('creature-count');
+  const tickCountEl = document.getElementById('tick-count');
+  const eventLog = document.getElementById('event-log');
+
+  // ---------------------------------------------------------------------------
+  // Logging
+  // ---------------------------------------------------------------------------
+  function log(msg, cls = 'log-info') {
+    const el = document.createElement('div');
+    el.className = `log-entry ${cls}`;
+    const ts = new Date().toLocaleTimeString();
+    el.textContent = `[${ts}] ${msg}`;
+    eventLog.prepend(el);
+
+    // Trim old entries
+    while (eventLog.children.length > MAX_LOG_ENTRIES) {
+      eventLog.removeChild(eventLog.lastChild);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Canvas rendering
+  // ---------------------------------------------------------------------------
+  function resizeCanvas() {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width - 24;
+    canvas.height = rect.height - 24;
+  }
+
+  function worldToCanvas(wx, wy) {
+    const scale = Math.min(canvas.width, canvas.height) / WORLD_BOUND;
+    return [wx * scale, wy * scale];
+  }
+
+  function canvasToWorld(cx, cy) {
+    const scale = Math.min(canvas.width, canvas.height) / WORLD_BOUND;
+    return [cx / scale, cy / scale];
+  }
+
+  function draw() {
+    const w = canvas.width;
+    const h = canvas.height;
+    const scale = Math.min(w, h) / WORLD_BOUND;
+
+    ctx2d.fillStyle = CANVAS_BG;
+    ctx2d.fillRect(0, 0, w, h);
+
+    // Grid
+    ctx2d.strokeStyle = GRID_COLOR;
+    ctx2d.lineWidth = 1;
+    for (let x = 0; x <= WORLD_BOUND; x += GRID_STEP) {
+      const [cx] = worldToCanvas(x, 0);
+      ctx2d.beginPath();
+      ctx2d.moveTo(cx, 0);
+      ctx2d.lineTo(cx, h);
+      ctx2d.stroke();
+    }
+    for (let y = 0; y <= WORLD_BOUND; y += GRID_STEP) {
+      const [, cy] = worldToCanvas(0, y);
+      ctx2d.beginPath();
+      ctx2d.moveTo(0, cy);
+      ctx2d.lineTo(w, cy);
+      ctx2d.stroke();
+    }
+
+    // Creatures
+    for (const [id, c] of creatures) {
+      const [cx, cy] = worldToCanvas(c.x, c.y);
+      const ownerHex = typeof c.owner === 'object' && c.owner.toHexString
+        ? c.owner.toHexString()
+        : String(c.owner);
+
+      // Color based on owner hash
+      const hue = hashToHue(ownerHex);
+      const isSelected = selectedCreatureId !== null && id === selectedCreatureId;
+      const isMine = myIdentity && ownerHex === myIdentity;
+
+      // Target line
+      if (Math.abs(c.targetX - c.x) > 0.5 || Math.abs(c.targetY - c.y) > 0.5) {
+        const [tx, ty] = worldToCanvas(c.targetX, c.targetY);
+        ctx2d.strokeStyle = `hsla(${hue}, 70%, 50%, 0.3)`;
+        ctx2d.lineWidth = 1;
+        ctx2d.setLineDash([4, 4]);
+        ctx2d.beginPath();
+        ctx2d.moveTo(cx, cy);
+        ctx2d.lineTo(tx, ty);
+        ctx2d.stroke();
+        ctx2d.setLineDash([]);
+      }
+
+      // Body
+      ctx2d.fillStyle = `hsl(${hue}, 70%, ${isMine ? 60 : 40}%)`;
+      ctx2d.beginPath();
+      ctx2d.arc(cx, cy, CREATURE_RADIUS * scale / 10, 0, Math.PI * 2);
+      ctx2d.fill();
+
+      // Selection ring
+      if (isSelected) {
+        ctx2d.strokeStyle = '#fff';
+        ctx2d.lineWidth = 2;
+        ctx2d.beginPath();
+        ctx2d.arc(cx, cy, (CREATURE_RADIUS + 4) * scale / 10, 0, Math.PI * 2);
+        ctx2d.stroke();
+      }
+
+      // ID label
+      ctx2d.fillStyle = '#aaa';
+      ctx2d.font = `${Math.max(9, 10 * scale / 10)}px monospace`;
+      ctx2d.fillText(String(id), cx + CREATURE_RADIUS * scale / 10 + 2, cy - 2);
+    }
+
+    // Player markers (at their positions)
+    for (const [hex, p] of players) {
+      const [cx, cy] = worldToCanvas(p.x, p.y);
+      ctx2d.fillStyle = p.online ? '#4caf50' : '#666';
+      ctx2d.fillRect(cx - 3, cy - 3, 6, 6);
+      ctx2d.fillStyle = '#888';
+      ctx2d.font = '9px monospace';
+      ctx2d.fillText(p.name, cx + 6, cy + 3);
+    }
+
+    // Stats
+    playerCountEl.textContent = players.size;
+    creatureCountEl.textContent = creatures.size;
+    tickCountEl.textContent = tickCount;
+
+    requestAnimationFrame(draw);
+  }
+
+  function hashToHue(hex) {
+    let h = 0;
+    for (let i = 0; i < hex.length; i++) {
+      h = ((h << 5) - h + hex.charCodeAt(i)) | 0;
+    }
+    return Math.abs(h) % 360;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Connection (requires generated bindings)
+  // ---------------------------------------------------------------------------
+  async function tryConnect() {
+    try {
+      // Attempt to import generated bindings
+      const { DbConnection, tables } = await import('./src/module_bindings/index.ts');
+
+      log('Bindings found. Connecting to SpacetimeDB...', 'log-info');
+
+      conn = DbConnection.builder()
+        .withUri('ws://localhost:3000')
+        .withDatabaseName('poc2')
+        .withToken(localStorage.getItem('poc2_token') || undefined)
+        .onConnect((connection, identity, token) => {
+          myIdentity = identity.toHexString();
+          localStorage.setItem('poc2_token', token);
+          log(`Connected as ${myIdentity.slice(0, 12)}...`, 'log-connect');
+
+          connDot.className = 'status-dot dot-green';
+          connStatus.textContent = 'Connected';
+
+          // Subscribe to all public tables
+          connection.subscriptionBuilder()
+            .onApplied(() => {
+              log('Subscription applied. Receiving data.', 'log-info');
+            })
+            .onError((_ctx, err) => {
+              log(`Subscription error: ${err}`, 'log-error');
+            })
+            .subscribe([
+              'SELECT * FROM player',
+              'SELECT * FROM creature',
+              'SELECT * FROM event_combat',
+            ]);
+        })
+        .onConnectError((_ctx, err) => {
+          log(`Connection error: ${err}`, 'log-error');
+          connDot.className = 'status-dot dot-red';
+          connStatus.textContent = 'Error';
+        })
+        .onDisconnect((_ctx, err) => {
+          log(`Disconnected${err ? ': ' + err : ''}`, 'log-error');
+          connDot.className = 'status-dot dot-red';
+          connStatus.textContent = 'Disconnected';
+        })
+        .build();
+
+      // Wire up table callbacks for local state mirroring
+      // (The exact API depends on generated bindings -- this is the expected pattern)
+      if (conn.db && conn.db.player) {
+        conn.db.player.onInsert((_ctx, row) => {
+          const hex = row.identity.toHexString();
+          players.set(hex, row);
+          log(`Player joined: ${row.name}`, 'log-connect');
+        });
+        conn.db.player.onUpdate((_ctx, _old, row) => {
+          const hex = row.identity.toHexString();
+          players.set(hex, row);
+        });
+        conn.db.player.onDelete((_ctx, row) => {
+          players.delete(row.identity.toHexString());
+        });
+      }
+
+      if (conn.db && conn.db.creature) {
+        conn.db.creature.onInsert((_ctx, row) => {
+          creatures.set(row.id, row);
+          log(`Creature ${row.id} spawned`, 'log-spawn');
+        });
+        conn.db.creature.onUpdate((_ctx, _old, row) => {
+          creatures.set(row.id, row);
+        });
+        conn.db.creature.onDelete((_ctx, row) => {
+          creatures.delete(row.id);
+        });
+      }
+
+      if (conn.db && conn.db.eventCombat) {
+        conn.db.eventCombat.onInsert((_ctx, row) => {
+          log(
+            `Combat! ${row.attackerId} vs ${row.defenderId} -- ${row.damage} dmg at (${row.x.toFixed(1)}, ${row.y.toFixed(1)})`,
+            'log-combat'
+          );
+        });
+      }
+
+    } catch (e) {
+      // Bindings not generated yet -- show fallback instructions
+      log('Client bindings not found. Use CLI commands below to verify module.', 'log-info');
+      log(`Import error: ${e.message}`, 'log-info');
+      connDot.className = 'status-dot dot-yellow';
+      connStatus.textContent = 'No bindings (use CLI)';
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Input handling
+  // ---------------------------------------------------------------------------
+  canvas.addEventListener('click', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const [wx, wy] = canvasToWorld(e.clientX - rect.left, e.clientY - rect.top);
+
+    if (conn && conn.reducers) {
+      conn.reducers.spawnCreature({ x: wx, y: wy });
+      log(`Spawning creature at (${wx.toFixed(1)}, ${wy.toFixed(1)})`, 'log-spawn');
+    } else {
+      log(`Would spawn at (${wx.toFixed(1)}, ${wy.toFixed(1)}) -- not connected`, 'log-info');
+    }
+  });
+
+  canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const [wx, wy] = canvasToWorld(e.clientX - rect.left, e.clientY - rect.top);
+
+    // Check if clicking on a creature
+    let clickedCreature = null;
+    const scale = Math.min(canvas.width, canvas.height) / WORLD_BOUND;
+    const clickRadius = (CREATURE_RADIUS + 4) * scale / 10;
+
+    for (const [id, c] of creatures) {
+      const [cx, cy] = worldToCanvas(c.x, c.y);
+      const dx = (e.clientX - rect.left) - cx;
+      const dy = (e.clientY - rect.top) - cy;
+      if (Math.sqrt(dx * dx + dy * dy) < clickRadius) {
+        clickedCreature = id;
+        break;
+      }
+    }
+
+    if (clickedCreature !== null) {
+      selectedCreatureId = clickedCreature;
+      log(`Selected creature ${clickedCreature}`, 'log-move');
+    } else if (selectedCreatureId !== null && conn && conn.reducers) {
+      conn.reducers.moveCreature({
+        creatureId: selectedCreatureId,
+        targetX: wx,
+        targetY: wy,
+      });
+      log(
+        `Moving creature ${selectedCreatureId} to (${wx.toFixed(1)}, ${wy.toFixed(1)})`,
+        'log-move'
+      );
+      selectedCreatureId = null;
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Boot
+  // ---------------------------------------------------------------------------
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+  requestAnimationFrame(draw);
+  tryConnect();
+</script>
+
+</body>
+</html>

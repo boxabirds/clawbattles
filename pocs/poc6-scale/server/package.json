@@ -1,0 +1,15 @@
+{
+  "name": "poc6-scale",
+  "version": "1.0.0",
+  "description": "POC 6: SpacetimeDB at Scale -- server",
+  "scripts": {
+    "build": "spacetime build",
+    "publish": "spacetime publish"
+  },
+  "dependencies": {
+    "spacetimedb": "^2.0.2"
+  },
+  "devDependencies": {
+    "typescript": "~5.6.2"
+  }
+}

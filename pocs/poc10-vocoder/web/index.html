@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POC 10: Creature Vocoder</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .app {
+      max-width: 720px;
+      width: 100%;
+    }
+
+    h1 {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      font-size: 12px;
+      color: #555;
+      margin-bottom: 24px;
+    }
+
+    /* Panels */
+    .panel {
+      background: rgba(10, 10, 30, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 12px;
+      backdrop-filter: blur(8px);
+    }
+
+    .panel-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      margin-bottom: 12px;
+    }
+
+    /* Status */
+    #status {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fbbf24;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    /* Text input */
+    .input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    #text-input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      padding: 10px 12px;
+      color: #e0e0e0;
+      font-family: inherit;
+      font-size: 14px;
+      resize: vertical;
+      min-height: 60px;
+      line-height: 1.4;
+    }
+    #text-input:focus {
+      outline: none;
+      border-color: #6c63ff;
+    }
+    #text-input::placeholder { color: #555; }
+
+    .input-side {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 120px;
+    }
+
+    #voice-select {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      padding: 8px;
+      color: #e0e0e0;
+      font-size: 12px;
+    }
+    #voice-select:focus { outline: none; border-color: #6c63ff; }
+    #voice-select option { background: #1a1a2e; color: #e0e0e0; }
+
+    #btn-generate {
+      padding: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      background: rgba(108, 99, 255, 0.3);
+      border: 1px solid #6c63ff;
+      color: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+      flex: 1;
+    }
+    #btn-generate:hover:not(:disabled) { background: rgba(108, 99, 255, 0.5); }
+    #btn-generate:disabled { opacity: 0.5; cursor: default; }
+
+    /* Preset phrases */
+    .preset-label {
+      font-size: 10px;
+      color: #555;
+      margin-bottom: 6px;
+    }
+
+    #preset-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+
+    .preset-btn {
+      padding: 5px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.03);
+      color: #888;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.1s;
+    }
+    .preset-btn:hover {
+      background: rgba(108, 99, 255, 0.15);
+      border-color: rgba(108, 99, 255, 0.4);
+      color: #ccc;
+    }
+
+    /* Playback buttons */
+    .playback-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .play-btn {
+      flex: 1;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.1s;
+    }
+    .play-btn:disabled { opacity: 0.3; cursor: default; }
+
+    #btn-play-vocoded {
+      background: rgba(167, 139, 250, 0.2);
+      border: 1px solid rgba(167, 139, 250, 0.5);
+      color: #a78bfa;
+    }
+    #btn-play-vocoded:hover:not(:disabled) { background: rgba(167, 139, 250, 0.35); }
+
+    #btn-play-looped {
+      background: rgba(52, 211, 153, 0.2);
+      border: 1px solid rgba(52, 211, 153, 0.5);
+      color: #34d399;
+    }
+    #btn-play-looped:hover:not(:disabled) { background: rgba(52, 211, 153, 0.35); }
+
+    #btn-play-dry {
+      background: rgba(251, 191, 36, 0.15);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      color: #fbbf24;
+    }
+    #btn-play-dry:hover:not(:disabled) { background: rgba(251, 191, 36, 0.3); }
+
+    #btn-stop {
+      background: rgba(248, 113, 113, 0.15);
+      border: 1px solid rgba(248, 113, 113, 0.4);
+      color: #f87171;
+      max-width: 80px;
+    }
+    #btn-stop:hover:not(:disabled) { background: rgba(248, 113, 113, 0.3); }
+
+    /* Sliders */
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .slider-label {
+      font-size: 12px;
+      color: #aaa;
+      min-width: 100px;
+    }
+
+    .slider-row input[type="range"] {
+      flex: 1;
+      accent-color: #6c63ff;
+      height: 4px;
+    }
+
+    .slider-val {
+      font-size: 12px;
+      font-weight: 600;
+      color: #e0e0e0;
+      min-width: 44px;
+      text-align: right;
+      font-family: 'SF Mono', 'Cascadia Code', monospace;
+    }
+
+    .slider-hint {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #444;
+      margin-top: -6px;
+      margin-bottom: 2px;
+      padding: 0 112px 0 112px;
+    }
+
+    /* LFO sub-rows */
+    .lfo-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 10px;
+      padding-left: 100px; /* align with slider (past label) */
+      padding-right: 0;
+      opacity: 0.45;
+      transition: opacity 0.15s;
+    }
+    .lfo-row.active { opacity: 1.0; }
+
+    .lfo-tag {
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #6c63ff;
+      min-width: 26px;
+    }
+
+    .lfo-field {
+      font-size: 9px;
+      color: #666;
+      min-width: 22px;
+      text-align: right;
+    }
+
+    .lfo-row input[type="range"] {
+      flex: 1;
+      accent-color: #6c63ff;
+      height: 3px;
+      min-width: 0;
+    }
+
+    .lfo-freq-val {
+      font-size: 10px;
+      font-weight: 600;
+      color: #888;
+      min-width: 40px;
+      text-align: right;
+      font-family: 'SF Mono', 'Cascadia Code', monospace;
+    }
+
+    /* Signal chain diagram */
+    .signal-chain {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 12px 0;
+      font-size: 11px;
+      color: #555;
+    }
+
+    .chain-node {
+      padding: 6px 10px;
+      border: 1px solid rgba(108, 99, 255, 0.3);
+      border-radius: 4px;
+      color: #a78bfa;
+      font-weight: 600;
+      background: rgba(108, 99, 255, 0.08);
+    }
+
+    .chain-arrow {
+      color: #444;
+      font-size: 14px;
+    }
+
+    /* Hints */
+    .hints {
+      font-size: 11px;
+      color: #444;
+      text-align: center;
+      margin-top: 16px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>POC 10 — Creature Vocoder</h1>
+    <p class="subtitle">KittenTTS sound source modulated through channel vocoder + FM synthesis</p>
+
+    <div id="status">Checking TTS service...</div>
+
+    <!-- Signal Chain Diagram -->
+    <div class="panel">
+      <div class="panel-title">Signal Chain</div>
+      <div class="signal-chain">
+        <span class="chain-node">TTS</span>
+        <span class="chain-arrow">&rarr;</span>
+        <span class="chain-node">Bandpass Analysis</span>
+        <span class="chain-arrow">&rarr;</span>
+        <span class="chain-node">Envelope</span>
+        <span class="chain-arrow">&rarr;</span>
+        <span class="chain-node">FM Carriers</span>
+        <span class="chain-arrow">&rarr;</span>
+        <span class="chain-node">Output</span>
+      </div>
+    </div>
+
+    <!-- TTS Input -->
+    <div class="panel">
+      <div class="panel-title">Text-to-Speech Source</div>
+      <div class="input-row">
+        <textarea id="text-input" placeholder="Type creature speech... (Enter to generate)">I am the swarm</textarea>
+        <div class="input-side">
+          <select id="voice-select"></select>
+          <button id="btn-generate" disabled>Generate</button>
+        </div>
+      </div>
+      <div class="preset-label">Quick phrases:</div>
+      <div id="preset-grid"></div>
+    </div>
+
+    <!-- Playback -->
+    <div class="panel">
+      <div class="panel-title">Playback</div>
+      <div class="playback-row">
+        <button class="play-btn" id="btn-play-vocoded" disabled>Play Vocoded</button>
+        <button class="play-btn" id="btn-play-looped" disabled>Play Looped</button>
+        <button class="play-btn" id="btn-play-dry" disabled>Play Dry TTS</button>
+        <button class="play-btn" id="btn-stop" disabled>Stop</button>
+      </div>
+    </div>
+
+    <!-- Creature Properties -->
+    <div class="panel">
+      <div class="panel-title">Creature Properties</div>
+
+      <div class="slider-row">
+        <span class="slider-label">Body Size</span>
+        <input type="range" id="slider-body-size" min="0" max="1" step="0.01" value="0.5">
+        <span class="slider-val" id="slider-body-size-val">0.50</span>
+      </div>
+      <div class="slider-hint"><span>Small (high pitch)</span><span>Large (low pitch)</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Material</span>
+        <input type="range" id="slider-material" min="0" max="1" step="0.01" value="0.0">
+        <span class="slider-val" id="slider-material-val">0.00</span>
+      </div>
+      <div class="slider-hint"><span>Organic / Chitin</span><span>Metallic</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Aggression</span>
+        <input type="range" id="slider-aggression" min="0" max="1" step="0.01" value="0.3">
+        <span class="slider-val" id="slider-aggression-val">0.30</span>
+      </div>
+      <div class="slider-hint"><span>Calm (smooth)</span><span>Aggressive (harsh)</span></div>
+    </div>
+
+    <!-- Vocoder Controls -->
+    <div class="panel">
+      <div class="panel-title">Vocoder Controls</div>
+
+      <div class="slider-row">
+        <span class="slider-label">Band Count</span>
+        <input type="range" id="slider-bands" min="1" max="32" step="1" value="16">
+        <span class="slider-val" id="slider-bands-val">16</span>
+      </div>
+      <div class="slider-hint"><span>1 (robotic)</span><span>32 (detailed)</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Wet / Dry</span>
+        <input type="range" id="slider-wetdry" min="0" max="1" step="0.01" value="1.0">
+        <span class="slider-val" id="slider-wetdry-val">100%</span>
+      </div>
+      <div class="slider-hint"><span>Dry (original TTS)</span><span>Wet (full vocoder)</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Formant Shift</span>
+        <input type="range" id="slider-formant-shift" min="0.5" max="2.0" step="0.1" value="1.0">
+        <span class="slider-val" id="slider-formant-shift-val">1.0x</span>
+      </div>
+      <div class="slider-hint"><span>0.5x (deeper)</span><span>2.0x (higher)</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Speed</span>
+        <input type="range" id="slider-speed" min="0.25" max="2.0" step="0.05" value="1.0">
+        <span class="slider-val" id="slider-speed-val">1.0x</span>
+      </div>
+      <div class="slider-hint"><span>0.25x (slow)</span><span>2.0x (fast)</span></div>
+    </div>
+
+    <!-- Output Filter -->
+    <div class="panel">
+      <div class="panel-title">Output Filter (4-pole)</div>
+
+      <div class="slider-row">
+        <span class="slider-label">Cutoff</span>
+        <input type="range" id="slider-filter-cutoff" min="0" max="1" step="0.001" value="1">
+        <span class="slider-val" id="slider-filter-cutoff-val">20k</span>
+      </div>
+      <div class="slider-hint"><span>20 Hz</span><span>20 kHz</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Resonance</span>
+        <input type="range" id="slider-filter-resonance" min="0" max="30" step="0.1" value="0">
+        <span class="slider-val" id="slider-filter-resonance-val">0.0</span>
+      </div>
+      <div class="slider-hint"><span>Flat</span><span>Screamy</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Env Follow</span>
+        <input type="range" id="slider-filter-env-follow" min="0" max="1" step="0.01" value="0">
+        <span class="slider-val" id="slider-filter-env-follow-val">0.00</span>
+      </div>
+      <div class="slider-hint"><span>Off</span><span>Full</span></div>
+    </div>
+
+    <div class="hints">
+      Enter to generate &middot; Adjust creature sliders to reshape the voice &middot;
+      Compare vocoded vs dry to hear the transformation
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

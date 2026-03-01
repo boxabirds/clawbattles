@@ -1,0 +1,1220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POC 3: Procedural IK Locomotion</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 10;
+    color: #e0e0e0;
+    background: rgba(10, 10, 30, 0.85);
+    padding: 16px 20px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    min-width: 280px;
+    backdrop-filter: blur(8px);
+    user-select: none;
+  }
+
+  #hud h2 {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    margin-bottom: 12px;
+  }
+
+  .hud-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+
+  .hud-row label {
+    color: #aaa;
+  }
+
+  .hud-row .value {
+    font-weight: 600;
+    color: #e0e0e0;
+  }
+
+  #fps-value {
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 2px;
+  }
+
+  #fps-label {
+    font-size: 11px;
+    color: #888;
+    margin-bottom: 10px;
+  }
+
+  .control-group {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .control-group-label {
+    font-size: 11px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .slider-row label {
+    font-size: 12px;
+    color: #aaa;
+    white-space: nowrap;
+    min-width: 70px;
+  }
+
+  .slider-row input[type="range"] {
+    flex: 1;
+    accent-color: #6c63ff;
+    cursor: pointer;
+  }
+
+  .slider-row .slider-val {
+    font-size: 12px;
+    color: #ccc;
+    min-width: 36px;
+    text-align: right;
+  }
+
+  .btn-group {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+
+  .btn-group button {
+    padding: 4px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.05);
+    color: #ccc;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .btn-group button:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .btn-group button.active {
+    background: rgba(108, 99, 255, 0.3);
+    border-color: #6c63ff;
+    color: #fff;
+  }
+
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: #aaa;
+    cursor: pointer;
+  }
+
+  .checkbox-row input {
+    accent-color: #6c63ff;
+    cursor: pointer;
+  }
+
+  #controls-hint {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #555;
+    line-height: 1.5;
+  }
+
+  #renderer-info {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #666;
+  }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.webgpu.js",
+    "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.tsl.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="hud">
+  <h2>Procedural IK Locomotion</h2>
+  <div id="fps-value">--</div>
+  <div id="fps-label">FPS</div>
+
+  <div class="hud-row">
+    <label>Legs</label>
+    <span class="value" id="legs-value">4</span>
+  </div>
+  <div class="hud-row">
+    <label>Speed</label>
+    <span class="value" id="speed-value">2.0</span>
+  </div>
+  <div class="hud-row">
+    <label>IK Solve</label>
+    <span class="value" id="ik-time-value">--</span>
+  </div>
+  <div class="hud-row">
+    <label>Creatures</label>
+    <span class="value" id="creature-count-value">1</span>
+  </div>
+
+  <div class="control-group">
+    <div class="control-group-label">Leg Configuration</div>
+    <div class="btn-group" id="leg-buttons">
+      <button data-legs="2">2</button>
+      <button data-legs="4" class="active">4</button>
+      <button data-legs="6">6</button>
+      <button data-legs="8">8</button>
+    </div>
+  </div>
+
+  <div class="control-group">
+    <div class="slider-row">
+      <label>Speed</label>
+      <input type="range" id="speed-slider" min="0.5" max="6" step="0.1" value="2.0">
+      <span class="slider-val" id="speed-slider-val">2.0</span>
+    </div>
+    <div class="slider-row">
+      <label>Creatures</label>
+      <input type="range" id="creature-slider" min="1" max="200" step="1" value="1">
+      <span class="slider-val" id="creature-slider-val">1</span>
+    </div>
+  </div>
+
+  <div class="control-group">
+    <label class="checkbox-row">
+      <input type="checkbox" id="show-ik-targets"> Show IK targets
+    </label>
+    <label class="checkbox-row">
+      <input type="checkbox" id="show-step-arcs"> Show step arcs
+    </label>
+  </div>
+
+  <div id="controls-hint">
+    Click ground: set target &middot; Drag: orbit &middot; Scroll: zoom
+  </div>
+  <div id="renderer-info">Initializing...</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------------------------------------------------------------------------
+// Constants — Locomotion
+// ---------------------------------------------------------------------------
+const STEP_THRESHOLD = 0.6;
+const STEP_HEIGHT = 0.3;
+const STEP_DURATION = 0.15;
+const IK_ITERATIONS = 5;
+const LEG_UPPER_LENGTH = 0.4;
+const LEG_LOWER_LENGTH = 0.35;
+const LEG_SEGMENT_COUNT = 3;          // joints per leg: hip, knee, foot
+const BONE_COUNT_PER_LEG = 2;         // bones per leg: upper, lower
+const BODY_RADIUS = 0.3;
+const BODY_HEIGHT = 0.5;
+const MOVE_SPEED_DEFAULT = 2.0;
+const BOB_AMPLITUDE = 0.05;
+const TILT_FACTOR = 0.15;
+
+// ---------------------------------------------------------------------------
+// Constants — Rendering
+// ---------------------------------------------------------------------------
+const GROUND_SIZE = 80;
+const GROUND_DIVISIONS = 80;
+const GROUND_COLOR = 0x2a2a4a;
+const GROUND_GRID_COLOR = 0x3a3a5a;
+const GROUND_Y = 0;
+
+const LEG_CYLINDER_RADIUS = 0.025;
+const LEG_CYLINDER_SEGMENTS = 6;
+const JOINT_SPHERE_RADIUS = 0.04;
+const JOINT_SPHERE_SEGMENTS = 8;
+const FOOT_PLANT_RADIUS = 0.06;
+const FOOT_PLANT_INNER_RATIO = 0.4;   // inner radius of foot plant ring as fraction of outer
+const FOOT_PLANT_SEGMENTS = 16;
+const FOOT_PLANT_Y_OFFSET = 0.005;
+const IK_TARGET_MARKER_RADIUS = 0.05;
+const IK_TARGET_MARKER_SEGMENTS = 8;
+const STEP_ARC_RESOLUTION = 12;
+const CLICK_TARGET_MARKER_RADIUS = 0.15;
+const CLICK_TARGET_MARKER_INNER = 0.08;
+const CLICK_TARGET_MARKER_SEGMENTS = 24;
+
+const BODY_SPHERE_SEGMENTS_W = 16;
+const BODY_SPHERE_SEGMENTS_H = 12;
+const LEG_COLOR_DARKEN_FACTOR = 0.7;
+
+// Body/leg color HSL parameters
+const BODY_SATURATION = 0.65;
+const BODY_LIGHTNESS = 0.55;
+const LEG_SATURATION = 0.55;
+const JOINT_SATURATION = 0.5;
+const JOINT_LIGHTNESS = 0.45;
+
+// Debug visualization opacity
+const PLANT_MARKER_OPACITY = 0.4;
+const TARGET_MARKER_OPACITY = 0.5;
+const ARC_LINE_OPACITY = 0.6;
+const GRID_OPACITY = 0.15;
+const CLICK_MARKER_OPACITY = 0.6;
+const Z_FIGHT_OFFSET = 0.001;        // tiny y offset to prevent z-fighting on ground plane
+const CLICK_MARKER_Y_OFFSET = 0.01;  // y offset for click target ring above ground
+
+// ---------------------------------------------------------------------------
+// Constants — Camera & Lighting
+// ---------------------------------------------------------------------------
+const CAMERA_FOV = 45;
+const CAMERA_NEAR = 0.1;
+const CAMERA_FAR = 500;
+const CAMERA_INITIAL_POS = new THREE.Vector3(5, 4, 5);
+const CAMERA_LOOK_AT = new THREE.Vector3(0, 0, 0);
+
+const AMBIENT_LIGHT_COLOR = 0x8888cc;
+const AMBIENT_LIGHT_INTENSITY = 0.6;
+const DIR_LIGHT_COLOR = 0xffffff;
+const DIR_LIGHT_INTENSITY = 1.2;
+const DIR_LIGHT_POS = new THREE.Vector3(30, 50, 20);
+
+const ORBIT_DAMPING_FACTOR = 0.1;
+const ORBIT_PAN_SPEED = 1.5;
+const ORBIT_ROTATE_SPEED = 0.8;
+const ORBIT_ZOOM_SPEED = 1.2;
+const ORBIT_MIN_DISTANCE = 1;
+const ORBIT_MAX_DISTANCE = 100;
+
+// ---------------------------------------------------------------------------
+// Constants — FPS & Performance
+// ---------------------------------------------------------------------------
+const FPS_SAMPLE_INTERVAL_MS = 250;
+const FPS_GOOD_THRESHOLD = 50;
+const FPS_WARN_THRESHOLD = 30;
+const FPS_COLOR_GOOD = '#4ade80';
+const FPS_COLOR_WARN = '#facc15';
+const FPS_COLOR_BAD = '#f87171';
+
+// ---------------------------------------------------------------------------
+// Constants — Multi-creature wandering
+// ---------------------------------------------------------------------------
+const WANDER_RANGE = 15;
+const WANDER_ARRIVAL_THRESHOLD = 0.3;
+const MAX_CREATURE_COUNT = 200;
+const MIN_CREATURE_COUNT = 1;
+const DEFAULT_CREATURE_COUNT = 1;
+const MULTI_CREATURE_SPREAD = 20;
+
+// ---------------------------------------------------------------------------
+// Constants — Gait stepping
+// ---------------------------------------------------------------------------
+const STEP_PREDICT_FACTOR = 0.5;       // how far ahead to predict foot target
+const BODY_SETTLE_LERP = 0.1;          // how quickly body settles when stopped
+const WEIGHT_SHIFT_SPEED = 3.0;        // how fast weight shifts when idle
+const PARABOLIC_PEAK_FACTOR = 4;       // 4*t*(1-t) peaks at 1.0 when t=0.5
+const HIP_OUTWARD_FACTOR = 0.3;        // how far outward from hip to project desired foot
+const HIP_INIT_OUTWARD_FACTOR = 0.5;   // initial outward factor for leg placement
+const KNEE_HEIGHT_FACTOR = 0.3;        // knee drops this fraction of upper leg length below hip
+const KNEE_MIDPOINT_DROP_FACTOR = 0.5; // knee hint drops by this factor of upper length
+const FORWARD_TURN_LERP = 0.15;        // how fast the creature turns to face movement direction
+const CLICK_DRAG_THRESHOLD_PX = 5;     // pixels of movement before a click becomes a drag
+const MAX_DELTA_TIME = 0.05;           // clamp dt to prevent physics explosion
+const TILT_SPEED_SCALE = 0.1;         // converts speed to tilt radians
+const BOB_PHASE_SPEED = 0.01;         // converts performance.now() ms to bob phase radians
+
+// ---------------------------------------------------------------------------
+// Constants — Leg configuration geometry
+// ---------------------------------------------------------------------------
+const BIPED_LATERAL_OFFSET_FACTOR = 0.6;   // fraction of BODY_RADIUS for biped hip offset
+const LEG_LATERAL_OFFSET_FACTOR = 0.9;     // fraction of BODY_RADIUS for multi-leg hip offset
+const LEG_FRONT_BACK_EXTENT = 0.8;         // front-most z offset as fraction of BODY_RADIUS
+const LEG_FRONT_BACK_RANGE = 1.6;          // total z range as fraction of BODY_RADIUS
+
+// ---------------------------------------------------------------------------
+// Leg configurations (computed from constants)
+// ---------------------------------------------------------------------------
+const LEG_CONFIGS = {
+  2: buildLegConfig(2),
+  4: buildLegConfig(4),
+  6: buildLegConfig(6),
+  8: buildLegConfig(8),
+};
+
+function buildLegConfig(legCount) {
+  const legs = [];
+  const halfCount = legCount / 2;
+
+  if (legCount === 2) {
+    // Biped: legs directly to left and right
+    const lateralOffset = BODY_RADIUS * BIPED_LATERAL_OFFSET_FACTOR;
+    legs.push({ offset: new THREE.Vector3(-lateralOffset, 0, 0), direction: new THREE.Vector3(-1, 0, 0), group: 0 });
+    legs.push({ offset: new THREE.Vector3( lateralOffset, 0, 0), direction: new THREE.Vector3( 1, 0, 0), group: 1 });
+    return legs;
+  }
+
+  // For 4+ legs: distribute along body sides
+  // Assign gait groups based on leg count
+  for (let i = 0; i < halfCount; i++) {
+    const t = halfCount === 1 ? 0 : i / (halfCount - 1);  // 0 = front, 1 = back
+    const zOffset = BODY_RADIUS * (LEG_FRONT_BACK_EXTENT - t * LEG_FRONT_BACK_RANGE);
+    const xOffset = BODY_RADIUS * LEG_LATERAL_OFFSET_FACTOR;
+
+    const groupLeft = assignGaitGroup(i, legCount, 'left');
+    const groupRight = assignGaitGroup(i, legCount, 'right');
+
+    // Left leg
+    legs.push({
+      offset: new THREE.Vector3(-xOffset, 0, zOffset),
+      direction: new THREE.Vector3(-1, 0, 0).normalize(),
+      group: groupLeft,
+    });
+    // Right leg
+    legs.push({
+      offset: new THREE.Vector3(xOffset, 0, zOffset),
+      direction: new THREE.Vector3(1, 0, 0).normalize(),
+      group: groupRight,
+    });
+  }
+
+  return legs;
+}
+
+function assignGaitGroup(pairIndex, legCount, side) {
+  if (legCount === 4) {
+    // Diagonal pairs: FL+BR = group 0, FR+BL = group 1
+    // pairIndex 0 = front, 1 = back
+    if (pairIndex === 0) return side === 'left' ? 0 : 1;
+    return side === 'left' ? 1 : 0;
+  }
+
+  if (legCount === 6) {
+    // Tripod gait: two groups of 3 forming alternating triangles
+    // L0,R1,L2 = group 0; R0,L1,R2 = group 1
+    const evenPair = pairIndex % 2 === 0;
+    if (side === 'left') return evenPair ? 0 : 1;
+    return evenPair ? 1 : 0;
+  }
+
+  // 8+ legs: wave gait — each pair is its own group, back to front
+  const halfCount = legCount / 2;
+  return halfCount - 1 - pairIndex;
+}
+
+// ---------------------------------------------------------------------------
+// FABRIK IK Solver
+// ---------------------------------------------------------------------------
+function fabrikSolve(joints, target, iterations) {
+  // joints: array of Vector3 (modified in place)
+  // First joint is root (hip), last is end effector (foot)
+  const numJoints = joints.length;
+  if (numJoints < 2) return;
+
+  // Compute bone lengths
+  const boneLengths = [];
+  for (let i = 0; i < numJoints - 1; i++) {
+    boneLengths.push(joints[i].distanceTo(joints[i + 1]));
+  }
+
+  const rootPos = joints[0].clone();
+
+  for (let iter = 0; iter < iterations; iter++) {
+    // Forward pass: end effector toward target
+    joints[numJoints - 1].copy(target);
+    for (let i = numJoints - 2; i >= 0; i--) {
+      const dir = joints[i].clone().sub(joints[i + 1]).normalize();
+      joints[i].copy(joints[i + 1]).add(dir.multiplyScalar(boneLengths[i]));
+    }
+
+    // Backward pass: root back to origin
+    joints[0].copy(rootPos);
+    for (let i = 0; i < numJoints - 1; i++) {
+      const dir = joints[i + 1].clone().sub(joints[i]).normalize();
+      joints[i + 1].copy(joints[i]).add(dir.multiplyScalar(boneLengths[i]));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Creature class
+// ---------------------------------------------------------------------------
+class Creature {
+  constructor(scene, position, legCount, hue) {
+    this.scene = scene;
+    this.legCount = legCount;
+    this.hue = hue;
+    this.bodyColor = new THREE.Color().setHSL(hue, BODY_SATURATION, BODY_LIGHTNESS);
+    this.legColor = new THREE.Color().setHSL(hue, LEG_SATURATION, BODY_LIGHTNESS * LEG_COLOR_DARKEN_FACTOR);
+    this.jointColor = new THREE.Color().setHSL(hue, JOINT_SATURATION, JOINT_LIGHTNESS);
+
+    this.position = position.clone();
+    this.position.y = BODY_HEIGHT;
+    this.targetPosition = this.position.clone();
+    this.targetPosition.y = GROUND_Y;
+    this.velocity = new THREE.Vector3();
+    this.forward = new THREE.Vector3(0, 0, -1);
+    this.isMoving = false;
+    this.moveSpeed = MOVE_SPEED_DEFAULT;
+
+    // Body visual
+    this.bodyMesh = null;
+    this.legMeshes = [];      // { bones: [cylinder, ...], joints: [sphere, ...], plantMarker, targetMarker, arcLine }
+    this.group = new THREE.Group();
+    scene.add(this.group);
+
+    // Leg IK state
+    this.legs = [];
+    this.config = LEG_CONFIGS[legCount];
+    this.gaitGroupCount = this._countGaitGroups();
+    this.activeGaitGroup = 0;
+    this.anyGroupStepping = false;
+
+    this._buildVisuals();
+    this._initLegs();
+  }
+
+  _countGaitGroups() {
+    const groups = new Set();
+    for (const leg of this.config) {
+      groups.add(leg.group);
+    }
+    return groups.size;
+  }
+
+  _buildVisuals() {
+    // Body sphere
+    const bodyGeo = new THREE.SphereGeometry(BODY_RADIUS, BODY_SPHERE_SEGMENTS_W, BODY_SPHERE_SEGMENTS_H);
+    const bodyMat = new THREE.MeshPhongMaterial({ color: this.bodyColor, flatShading: true, shininess: 20 });
+    this.bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
+    this.group.add(this.bodyMesh);
+
+    // Shared geometries for legs
+    const boneGeo = new THREE.CylinderGeometry(LEG_CYLINDER_RADIUS, LEG_CYLINDER_RADIUS, 1, LEG_CYLINDER_SEGMENTS);
+    const jointGeo = new THREE.SphereGeometry(JOINT_SPHERE_RADIUS, JOINT_SPHERE_SEGMENTS, JOINT_SPHERE_SEGMENTS);
+    const plantGeo = new THREE.RingGeometry(FOOT_PLANT_RADIUS * FOOT_PLANT_INNER_RATIO, FOOT_PLANT_RADIUS, FOOT_PLANT_SEGMENTS);
+    const targetGeo = new THREE.SphereGeometry(IK_TARGET_MARKER_RADIUS, IK_TARGET_MARKER_SEGMENTS, IK_TARGET_MARKER_SEGMENTS);
+
+    const legMat = new THREE.MeshPhongMaterial({ color: this.legColor, flatShading: true, shininess: 10 });
+    const jointMat = new THREE.MeshPhongMaterial({ color: this.jointColor, flatShading: true, shininess: 10 });
+    const plantMat = new THREE.MeshBasicMaterial({ color: 0x66ff66, transparent: true, opacity: PLANT_MARKER_OPACITY, side: THREE.DoubleSide });
+    const targetMat = new THREE.MeshBasicMaterial({ color: 0xff6666, transparent: true, opacity: TARGET_MARKER_OPACITY });
+    const arcMat = new THREE.LineBasicMaterial({ color: 0xffaa44, transparent: true, opacity: ARC_LINE_OPACITY });
+
+    for (let i = 0; i < this.config.length; i++) {
+      const bones = [];
+      const joints = [];
+
+      // 2 bones per leg
+      for (let b = 0; b < BONE_COUNT_PER_LEG; b++) {
+        const bone = new THREE.Mesh(boneGeo, legMat);
+        this.group.add(bone);
+        bones.push(bone);
+      }
+
+      // 3 joint spheres per leg (hip, knee, foot)
+      for (let j = 0; j < LEG_SEGMENT_COUNT; j++) {
+        const joint = new THREE.Mesh(jointGeo, jointMat);
+        this.group.add(joint);
+        joints.push(joint);
+      }
+
+      // Foot plant marker
+      const plantMarker = new THREE.Mesh(plantGeo, plantMat.clone());
+      plantMarker.rotation.x = -Math.PI / 2;
+      this.scene.add(plantMarker);   // in world space
+
+      // IK target marker
+      const targetMarker = new THREE.Mesh(targetGeo, targetMat.clone());
+      targetMarker.visible = false;
+      this.scene.add(targetMarker);
+
+      // Step arc line
+      const arcGeometry = new THREE.BufferGeometry();
+      const arcPositions = new Float32Array(STEP_ARC_RESOLUTION * 3);
+      arcGeometry.setAttribute('position', new THREE.BufferAttribute(arcPositions, 3));
+      const arcLine = new THREE.Line(arcGeometry, arcMat.clone());
+      arcLine.visible = false;
+      this.scene.add(arcLine);
+
+      this.legMeshes.push({ bones, joints, plantMarker, targetMarker, arcLine });
+    }
+  }
+
+  _initLegs() {
+    for (let i = 0; i < this.config.length; i++) {
+      const cfg = this.config[i];
+      const hipWorld = this.position.clone().add(cfg.offset);
+
+      // Initial foot position: project hip out and down
+      const footPos = hipWorld.clone().add(cfg.direction.clone().multiplyScalar(LEG_UPPER_LENGTH * HIP_INIT_OUTWARD_FACTOR));
+      footPos.y = GROUND_Y;
+
+      // Initialize joint chain: hip, knee, foot
+      const knee = hipWorld.clone().lerp(footPos, 0.5);
+      knee.y = hipWorld.y - LEG_UPPER_LENGTH * KNEE_HEIGHT_FACTOR;
+
+      this.legs.push({
+        joints: [hipWorld.clone(), knee.clone(), footPos.clone()],
+        plantedPos: footPos.clone(),
+        targetPos: footPos.clone(),
+        stepping: false,
+        stepProgress: 0,
+        stepStartPos: footPos.clone(),
+        stepEndPos: footPos.clone(),
+        group: cfg.group,
+        configIndex: i,
+      });
+    }
+  }
+
+  setLegCount(count) {
+    // Remove old visuals
+    for (const lm of this.legMeshes) {
+      for (const b of lm.bones) this.group.remove(b);
+      for (const j of lm.joints) this.group.remove(j);
+      this.scene.remove(lm.plantMarker);
+      this.scene.remove(lm.targetMarker);
+      this.scene.remove(lm.arcLine);
+    }
+    this.legMeshes = [];
+    this.legs = [];
+
+    this.legCount = count;
+    this.config = LEG_CONFIGS[count];
+    this.gaitGroupCount = this._countGaitGroups();
+    this.activeGaitGroup = 0;
+
+    this._buildVisuals();
+    this._initLegs();
+  }
+
+  setTarget(worldPos) {
+    this.targetPosition.set(worldPos.x, GROUND_Y, worldPos.z);
+    this.isMoving = true;
+  }
+
+  update(dt) {
+    this._updateMovement(dt);
+    this._updateGait(dt);
+    this._solveAllIK();
+    this._updateVisuals();
+  }
+
+  _updateMovement(dt) {
+    const toTarget = new THREE.Vector3().subVectors(this.targetPosition, this.position);
+    toTarget.y = 0;
+    const dist = toTarget.length();
+
+    if (dist < WANDER_ARRIVAL_THRESHOLD) {
+      this.isMoving = false;
+      this.velocity.lerp(new THREE.Vector3(), BODY_SETTLE_LERP);
+    } else {
+      this.isMoving = true;
+      const dir = toTarget.normalize();
+      this.velocity.copy(dir).multiplyScalar(this.moveSpeed);
+      this.forward.lerp(dir, FORWARD_TURN_LERP).normalize();
+    }
+
+    // Apply velocity
+    const movement = this.velocity.clone().multiplyScalar(dt);
+    this.position.add(movement);
+    this.position.y = BODY_HEIGHT;
+
+    // Body bob: synced to gait
+    const steppingCount = this.legs.filter(l => l.stepping).length;
+    if (steppingCount > 0 || this.isMoving) {
+      const bobPhase = performance.now() * BOB_PHASE_SPEED * this.moveSpeed;
+      this.position.y = BODY_HEIGHT + Math.sin(bobPhase) * BOB_AMPLITUDE;
+    }
+  }
+
+  _updateGait(dt) {
+    // Check if any leg in the active group is still stepping
+    this.anyGroupStepping = false;
+    for (const leg of this.legs) {
+      if (leg.stepping) {
+        this.anyGroupStepping = true;
+        // Advance step animation
+        leg.stepProgress += dt / STEP_DURATION;
+        if (leg.stepProgress >= 1) {
+          leg.stepProgress = 1;
+          leg.stepping = false;
+          leg.plantedPos.copy(leg.stepEndPos);
+          leg.targetPos.copy(leg.stepEndPos);
+        } else {
+          // Parabolic arc interpolation
+          const t = leg.stepProgress;
+          const x = leg.stepStartPos.x + (leg.stepEndPos.x - leg.stepStartPos.x) * t;
+          const z = leg.stepStartPos.z + (leg.stepEndPos.z - leg.stepStartPos.z) * t;
+          // Parabolic y: 4 * h * t * (1 - t) peaks at h when t=0.5
+          const y = GROUND_Y + STEP_HEIGHT * PARABOLIC_PEAK_FACTOR * t * (1 - t);
+          leg.targetPos.set(x, y, z);
+        }
+      }
+    }
+
+    // If no group is stepping, check if any group needs to step
+    if (!this.anyGroupStepping) {
+      let worstGroup = -1;
+      let worstDist = 0;
+
+      for (const leg of this.legs) {
+        // Compute desired foot position: project hip position down + outward
+        const hipWorld = this._getHipWorldPos(leg.configIndex);
+        const cfg = this.config[leg.configIndex];
+        const desiredFoot = hipWorld.clone().add(cfg.direction.clone().multiplyScalar(LEG_UPPER_LENGTH * HIP_OUTWARD_FACTOR));
+        desiredFoot.y = GROUND_Y;
+
+        // Add velocity prediction
+        if (this.isMoving) {
+          const prediction = this.velocity.clone().multiplyScalar(STEP_PREDICT_FACTOR * STEP_DURATION);
+          desiredFoot.add(prediction);
+        }
+
+        const dist = desiredFoot.distanceTo(leg.plantedPos);
+        if (dist > STEP_THRESHOLD && dist > worstDist) {
+          worstDist = dist;
+          worstGroup = leg.group;
+        }
+      }
+
+      if (worstGroup >= 0) {
+        // Trigger all legs in this group to step
+        for (const leg of this.legs) {
+          if (leg.group === worstGroup) {
+            const hipWorld = this._getHipWorldPos(leg.configIndex);
+            const cfg = this.config[leg.configIndex];
+            const desiredFoot = hipWorld.clone().add(cfg.direction.clone().multiplyScalar(LEG_UPPER_LENGTH * HIP_OUTWARD_FACTOR));
+            desiredFoot.y = GROUND_Y;
+
+            if (this.isMoving) {
+              const prediction = this.velocity.clone().multiplyScalar(STEP_PREDICT_FACTOR * STEP_DURATION);
+              desiredFoot.add(prediction);
+            }
+
+            leg.stepping = true;
+            leg.stepProgress = 0;
+            leg.stepStartPos.copy(leg.plantedPos);
+            leg.stepEndPos.copy(desiredFoot);
+          }
+        }
+      }
+    }
+  }
+
+  _getHipWorldPos(configIndex) {
+    const cfg = this.config[configIndex];
+    return new THREE.Vector3(
+      this.position.x + cfg.offset.x,
+      this.position.y + cfg.offset.y,
+      this.position.z + cfg.offset.z,
+    );
+  }
+
+  _solveAllIK() {
+    for (const leg of this.legs) {
+      const hipWorld = this._getHipWorldPos(leg.configIndex);
+
+      // Set hip position
+      leg.joints[0].copy(hipWorld);
+
+      // Initialize knee between hip and target for better convergence
+      const midpoint = hipWorld.clone().lerp(leg.targetPos, 0.5);
+      midpoint.y = hipWorld.y - LEG_UPPER_LENGTH * KNEE_MIDPOINT_DROP_FACTOR;
+      leg.joints[1].copy(midpoint);
+
+      // Set foot to target
+      leg.joints[2].copy(leg.targetPos);
+
+      // Set bone lengths before solving
+      const totalReach = LEG_UPPER_LENGTH + LEG_LOWER_LENGTH;
+      const hipToTarget = hipWorld.distanceTo(leg.targetPos);
+
+      if (hipToTarget > totalReach) {
+        // Target out of reach — extend straight toward it
+        const dir = leg.targetPos.clone().sub(hipWorld).normalize();
+        leg.joints[1].copy(hipWorld).add(dir.clone().multiplyScalar(LEG_UPPER_LENGTH));
+        leg.joints[2].copy(hipWorld).add(dir.multiplyScalar(totalReach));
+      } else {
+        // Solve with FABRIK
+        // Reset bone lengths by positioning joints at correct distances
+        const dir01 = leg.joints[1].clone().sub(leg.joints[0]).normalize();
+        leg.joints[1].copy(leg.joints[0]).add(dir01.multiplyScalar(LEG_UPPER_LENGTH));
+
+        const dir12 = leg.joints[2].clone().sub(leg.joints[1]).normalize();
+        leg.joints[2].copy(leg.joints[1]).add(dir12.multiplyScalar(LEG_LOWER_LENGTH));
+
+        fabrikSolve(leg.joints, leg.targetPos, IK_ITERATIONS);
+      }
+    }
+  }
+
+  _updateVisuals() {
+    // Body position and orientation
+    this.bodyMesh.position.copy(this.position);
+    // Make position relative to group origin... actually keep group at origin
+    // since leg plant markers are in world space
+    this.group.position.set(0, 0, 0);
+    this.bodyMesh.position.copy(this.position);
+
+    // Body orientation: face forward direction, tilt when moving
+    const yawAngle = Math.atan2(this.forward.x, this.forward.z);
+    const yawQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yawAngle);
+
+    if (this.isMoving) {
+      const speed = this.velocity.length();
+      const tiltAngle = Math.min(speed * TILT_FACTOR * TILT_SPEED_SCALE, TILT_FACTOR);
+      // Tilt around the local right axis (perpendicular to forward, in ground plane)
+      const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), this.forward).normalize();
+      const tiltQuat = new THREE.Quaternion().setFromAxisAngle(right, tiltAngle);
+      this.bodyMesh.quaternion.copy(tiltQuat).multiply(yawQuat);
+    } else {
+      this.bodyMesh.quaternion.copy(yawQuat);
+    }
+
+    // Update leg visuals
+    for (let i = 0; i < this.legs.length; i++) {
+      const leg = this.legs[i];
+      const meshes = this.legMeshes[i];
+
+      // Position joint spheres
+      for (let j = 0; j < LEG_SEGMENT_COUNT; j++) {
+        meshes.joints[j].position.copy(leg.joints[j]);
+      }
+
+      // Position bone cylinders between joints
+      for (let b = 0; b < BONE_COUNT_PER_LEG; b++) {
+        const start = leg.joints[b];
+        const end = leg.joints[b + 1];
+        const mid = start.clone().add(end).multiplyScalar(0.5);
+        const boneLength = start.distanceTo(end);
+
+        meshes.bones[b].position.copy(mid);
+        meshes.bones[b].scale.set(1, boneLength, 1);
+
+        // Orient cylinder from start to end
+        const dir = end.clone().sub(start).normalize();
+        const up = new THREE.Vector3(0, 1, 0);
+        const quat = new THREE.Quaternion().setFromUnitVectors(up, dir);
+        meshes.bones[b].quaternion.copy(quat);
+      }
+
+      // Foot plant marker
+      meshes.plantMarker.position.set(leg.plantedPos.x, GROUND_Y + FOOT_PLANT_Y_OFFSET, leg.plantedPos.z);
+
+      // IK target marker
+      meshes.targetMarker.position.copy(leg.targetPos);
+
+      // Step arc visualization
+      if (leg.stepping) {
+        const positions = meshes.arcLine.geometry.attributes.position.array;
+        for (let s = 0; s < STEP_ARC_RESOLUTION; s++) {
+          const t = s / (STEP_ARC_RESOLUTION - 1);
+          positions[s * 3]     = leg.stepStartPos.x + (leg.stepEndPos.x - leg.stepStartPos.x) * t;
+          positions[s * 3 + 1] = GROUND_Y + STEP_HEIGHT * PARABOLIC_PEAK_FACTOR * t * (1 - t);
+          positions[s * 3 + 2] = leg.stepStartPos.z + (leg.stepEndPos.z - leg.stepStartPos.z) * t;
+        }
+        meshes.arcLine.geometry.attributes.position.needsUpdate = true;
+        meshes.arcLine.geometry.computeBoundingSphere();
+      }
+    }
+  }
+
+  setDebugVisibility(showTargets, showArcs) {
+    for (const lm of this.legMeshes) {
+      lm.targetMarker.visible = showTargets;
+      lm.arcLine.visible = showArcs;
+    }
+  }
+
+  dispose() {
+    // Remove all meshes from scene
+    for (const lm of this.legMeshes) {
+      for (const b of lm.bones) this.group.remove(b);
+      for (const j of lm.joints) this.group.remove(j);
+      this.scene.remove(lm.plantMarker);
+      this.scene.remove(lm.targetMarker);
+      this.scene.remove(lm.arcLine);
+
+      // Dispose geometries and materials
+      lm.plantMarker.geometry.dispose();
+      lm.plantMarker.material.dispose();
+      lm.targetMarker.geometry.dispose();
+      lm.targetMarker.material.dispose();
+      lm.arcLine.geometry.dispose();
+      lm.arcLine.material.dispose();
+    }
+    if (this.bodyMesh) {
+      this.bodyMesh.geometry.dispose();
+      this.bodyMesh.material.dispose();
+    }
+    this.scene.remove(this.group);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DOM Refs
+// ---------------------------------------------------------------------------
+const fpsValue = document.getElementById('fps-value');
+const legsValue = document.getElementById('legs-value');
+const speedValue = document.getElementById('speed-value');
+const ikTimeValue = document.getElementById('ik-time-value');
+const creatureCountValue = document.getElementById('creature-count-value');
+const speedSlider = document.getElementById('speed-slider');
+const speedSliderVal = document.getElementById('speed-slider-val');
+const creatureSlider = document.getElementById('creature-slider');
+const creatureSliderVal = document.getElementById('creature-slider-val');
+const showIkTargets = document.getElementById('show-ik-targets');
+const showStepArcs = document.getElementById('show-step-arcs');
+const legButtons = document.querySelectorAll('#leg-buttons button');
+const rendererInfo = document.getElementById('renderer-info');
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let currentLegCount = 4;
+let currentSpeed = MOVE_SPEED_DEFAULT;
+let currentCreatureCount = DEFAULT_CREATURE_COUNT;
+let creatures = [];
+let clickTargetMarker = null;
+
+// ---------------------------------------------------------------------------
+// Scene setup
+// ---------------------------------------------------------------------------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+scene.fog = new THREE.Fog(0x1a1a2e, 40, 120);
+
+const camera = new THREE.PerspectiveCamera(CAMERA_FOV, window.innerWidth / window.innerHeight, CAMERA_NEAR, CAMERA_FAR);
+camera.position.copy(CAMERA_INITIAL_POS);
+camera.lookAt(CAMERA_LOOK_AT);
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(AMBIENT_LIGHT_COLOR, AMBIENT_LIGHT_INTENSITY);
+scene.add(ambientLight);
+const dirLight = new THREE.DirectionalLight(DIR_LIGHT_COLOR, DIR_LIGHT_INTENSITY);
+dirLight.position.copy(DIR_LIGHT_POS);
+scene.add(dirLight);
+
+// Ground plane with grid
+const groundGeo = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE);
+const groundMat = new THREE.MeshPhongMaterial({ color: GROUND_COLOR, shininess: 10, flatShading: true });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = GROUND_Y;
+scene.add(ground);
+
+// Subtle grid overlay
+const gridHelper = new THREE.GridHelper(GROUND_SIZE, GROUND_DIVISIONS, GROUND_GRID_COLOR, GROUND_GRID_COLOR);
+gridHelper.position.y = GROUND_Y + Z_FIGHT_OFFSET;
+gridHelper.material.opacity = GRID_OPACITY;
+gridHelper.material.transparent = true;
+scene.add(gridHelper);
+
+// Click target marker (ring on ground)
+{
+  const markerGeo = new THREE.RingGeometry(CLICK_TARGET_MARKER_INNER, CLICK_TARGET_MARKER_RADIUS, CLICK_TARGET_MARKER_SEGMENTS);
+  const markerMat = new THREE.MeshBasicMaterial({ color: 0x6c63ff, transparent: true, opacity: CLICK_MARKER_OPACITY, side: THREE.DoubleSide });
+  clickTargetMarker = new THREE.Mesh(markerGeo, markerMat);
+  clickTargetMarker.rotation.x = -Math.PI / 2;
+  clickTargetMarker.position.y = GROUND_Y + CLICK_MARKER_Y_OFFSET;
+  clickTargetMarker.visible = false;
+  scene.add(clickTargetMarker);
+}
+
+// ---------------------------------------------------------------------------
+// Creature management
+// ---------------------------------------------------------------------------
+function spawnCreatures(count) {
+  // Remove existing
+  for (const c of creatures) c.dispose();
+  creatures = [];
+
+  for (let i = 0; i < count; i++) {
+    const hue = Math.random();
+    let pos;
+    if (count === 1) {
+      pos = new THREE.Vector3(0, 0, 0);
+    } else {
+      pos = new THREE.Vector3(
+        (Math.random() - 0.5) * MULTI_CREATURE_SPREAD,
+        0,
+        (Math.random() - 0.5) * MULTI_CREATURE_SPREAD,
+      );
+    }
+    const creature = new Creature(scene, pos, currentLegCount, hue);
+    creature.moveSpeed = currentSpeed;
+
+    // Multi-creature: give random wander target
+    if (count > 1) {
+      creature.setTarget(new THREE.Vector3(
+        (Math.random() - 0.5) * WANDER_RANGE,
+        GROUND_Y,
+        (Math.random() - 0.5) * WANDER_RANGE,
+      ));
+    }
+
+    creatures.push(creature);
+  }
+}
+
+function updateCreatureWander() {
+  if (currentCreatureCount <= 1) return;
+  for (const creature of creatures) {
+    if (!creature.isMoving) {
+      creature.setTarget(new THREE.Vector3(
+        (Math.random() - 0.5) * WANDER_RANGE,
+        GROUND_Y,
+        (Math.random() - 0.5) * WANDER_RANGE,
+      ));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Renderer
+// ---------------------------------------------------------------------------
+let renderer;
+let controls;
+
+async function initRenderer() {
+  try {
+    renderer = new THREE.WebGPURenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    document.body.appendChild(renderer.domElement);
+    await renderer.init();
+    rendererInfo.textContent = 'Renderer: WebGPU';
+  } catch (err) {
+    console.warn('WebGPU init failed, falling back to WebGL:', err);
+
+    if (renderer) {
+      renderer.dispose();
+      if (renderer.domElement.parentNode) {
+        renderer.domElement.parentNode.removeChild(renderer.domElement);
+      }
+    }
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    document.body.appendChild(renderer.domElement);
+    rendererInfo.textContent = 'Renderer: WebGL (WebGPU unavailable)';
+  }
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = ORBIT_DAMPING_FACTOR;
+  controls.enablePan = true;
+  controls.panSpeed = ORBIT_PAN_SPEED;
+  controls.rotateSpeed = ORBIT_ROTATE_SPEED;
+  controls.zoomSpeed = ORBIT_ZOOM_SPEED;
+  controls.minDistance = ORBIT_MIN_DISTANCE;
+  controls.maxDistance = ORBIT_MAX_DISTANCE;
+  controls.target.copy(CAMERA_LOOK_AT);
+  controls.update();
+}
+
+// ---------------------------------------------------------------------------
+// Raycaster for ground click
+// ---------------------------------------------------------------------------
+const raycaster = new THREE.Raycaster();
+const mouseNDC = new THREE.Vector2();
+let pointerDownPos = { x: 0, y: 0 };
+
+function onPointerDown(event) {
+  if (event.button !== 0) return;
+  pointerDownPos.x = event.clientX;
+  pointerDownPos.y = event.clientY;
+}
+
+function onPointerUp(event) {
+  if (event.button !== 0) return;
+
+  // Ignore if the pointer moved (orbit drag)
+  const dx = event.clientX - pointerDownPos.x;
+  const dy = event.clientY - pointerDownPos.y;
+  const distSq = dx * dx + dy * dy;
+  if (distSq > CLICK_DRAG_THRESHOLD_PX * CLICK_DRAG_THRESHOLD_PX) return;
+
+  mouseNDC.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouseNDC.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouseNDC, camera);
+  const hits = raycaster.intersectObject(ground);
+
+  if (hits.length > 0) {
+    const point = hits[0].point;
+
+    // Single creature mode: direct control
+    if (currentCreatureCount === 1 && creatures.length === 1) {
+      creatures[0].setTarget(point);
+      clickTargetMarker.position.set(point.x, GROUND_Y + CLICK_MARKER_Y_OFFSET, point.z);
+      clickTargetMarker.visible = true;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HUD controls
+// ---------------------------------------------------------------------------
+legButtons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    legButtons.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentLegCount = parseInt(btn.dataset.legs, 10);
+    legsValue.textContent = currentLegCount;
+
+    // Rebuild creatures with new leg count
+    for (const c of creatures) {
+      c.setLegCount(currentLegCount);
+    }
+  });
+});
+
+speedSlider.addEventListener('input', () => {
+  currentSpeed = parseFloat(speedSlider.value);
+  speedSliderVal.textContent = currentSpeed.toFixed(1);
+  speedValue.textContent = currentSpeed.toFixed(1);
+  for (const c of creatures) {
+    c.moveSpeed = currentSpeed;
+  }
+});
+
+creatureSlider.addEventListener('input', () => {
+  const count = parseInt(creatureSlider.value, 10);
+  if (count !== currentCreatureCount) {
+    currentCreatureCount = count;
+    creatureSliderVal.textContent = count;
+    creatureCountValue.textContent = count;
+    spawnCreatures(count);
+    // Hide click target when in multi mode
+    if (count > 1) clickTargetMarker.visible = false;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// FPS counter
+// ---------------------------------------------------------------------------
+let frameCount = 0;
+let lastFpsSampleTime = 0;
+
+function updateFps(now) {
+  frameCount++;
+  if (now - lastFpsSampleTime >= FPS_SAMPLE_INTERVAL_MS) {
+    const fps = Math.round((frameCount * 1000) / (now - lastFpsSampleTime));
+    frameCount = 0;
+    lastFpsSampleTime = now;
+    fpsValue.textContent = fps;
+
+    if (fps >= FPS_GOOD_THRESHOLD) {
+      fpsValue.style.color = FPS_COLOR_GOOD;
+    } else if (fps >= FPS_WARN_THRESHOLD) {
+      fpsValue.style.color = FPS_COLOR_WARN;
+    } else {
+      fpsValue.style.color = FPS_COLOR_BAD;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Resize
+// ---------------------------------------------------------------------------
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---------------------------------------------------------------------------
+// Main loop
+// ---------------------------------------------------------------------------
+async function main() {
+  await initRenderer();
+
+  // Listen for ground clicks AFTER renderer is set up
+  renderer.domElement.addEventListener('pointerdown', onPointerDown);
+  renderer.domElement.addEventListener('pointerup', onPointerUp);
+
+  // Spawn initial creature
+  spawnCreatures(DEFAULT_CREATURE_COUNT);
+
+  lastFpsSampleTime = performance.now();
+  const clock = new THREE.Clock();
+
+  function animate() {
+    const dt = Math.min(clock.getDelta(), MAX_DELTA_TIME);
+    const now = performance.now();
+
+    // Debug visibility
+    const showTargets = showIkTargets.checked;
+    const showArcs = showStepArcs.checked;
+
+    // Update creatures
+    const ikStart = performance.now();
+    for (const creature of creatures) {
+      creature.update(dt);
+      creature.setDebugVisibility(showTargets, showArcs);
+    }
+    const ikEnd = performance.now();
+    const ikMs = (ikEnd - ikStart).toFixed(2);
+    ikTimeValue.textContent = ikMs + ' ms';
+
+    // Multi-creature wander
+    updateCreatureWander();
+
+    updateFps(now);
+    controls.update();
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+  }
+
+  requestAnimationFrame(animate);
+}
+
+main().catch(err => {
+  console.error(err);
+  rendererInfo.textContent = 'Error: ' + err.message;
+});
+</script>
+
+</body>
+</html>

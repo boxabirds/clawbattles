@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-02-28T16:44:53.099Z",
+  "config": {
+    "bodyArchetype": "berserker",
+    "populationSize": 8,
+    "generations": 5,
+    "matchesPerEval": 10,
+    "seed": 42
+  },
+  "randomBaselineFitness": 0.46241857142857146,
+  "generationBeatRandom": 1,
+  "killConditions": {
+    "convergence": {
+      "passed": true,
+      "minDiversity": 0.30602987338422294
+    },
+    "iterationSpeed": {
+      "passed": true,
+      "generationsBeatRandom": 1
+    },
+    "driveRelevance": {
+      "passed": null,
+      "message": "Run with --test-drives to evaluate"
+    }
+  },
+  "generations": [
+    {
+      "generation": 1,
+      "bestFitness": 0.7003333333333334,
+      "avgFitness": 0.4433541527777779,
+      "diversity": 0.6272026254823172
+    },
+    {
+      "generation": 2,
+      "bestFitness": 0.867,
+      "avgFitness": 0.44934126984126993,
+      "diversity": 0.6151731018185946
+    },
+    {
+      "generation": 3,
+      "bestFitness": 0.867,
+      "avgFitness": 0.4315833333333333,
+      "diversity": 0.30602987338422294
+    },
+    {
+      "generation": 4,
+      "bestFitness": 0.7003333333333334,
+      "avgFitness": 0.4364444444444445,
+      "diversity": 0.3384208822997165
+    },
+    {
+      "generation": 5,
+      "bestFitness": 0.867,
+      "avgFitness": 0.47384523809523815,
+      "diversity": 0.31937080513378446
+    }
+  ],
+  "elapsedSeconds": 0.330467583
+}

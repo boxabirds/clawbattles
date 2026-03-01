@@ -1,0 +1,1272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POC 4: Part Assembly + Connection Physics</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 10;
+    color: #e0e0e0;
+    background: rgba(10, 10, 30, 0.85);
+    padding: 16px 20px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    min-width: 280px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    backdrop-filter: blur(8px);
+    user-select: none;
+  }
+
+  #hud h2 {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    margin-bottom: 12px;
+  }
+
+  .hud-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+
+  .hud-row label { color: #aaa; }
+  .hud-row .value { font-weight: 600; color: #e0e0e0; }
+
+  #fps-value {
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 2px;
+  }
+
+  #fps-label {
+    font-size: 11px;
+    color: #888;
+    margin-bottom: 10px;
+  }
+
+  .control-group {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .control-group-label {
+    font-size: 11px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+
+  .btn-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .btn {
+    padding: 6px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.06);
+    color: #ccc;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+
+  .btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  .btn.active {
+    background: rgba(108, 99, 255, 0.3);
+    border-color: #6c63ff;
+    color: #fff;
+  }
+
+  #controls-hint {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #555;
+    line-height: 1.5;
+  }
+
+  #renderer-info {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #666;
+  }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.webgpu.js",
+    "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.tsl.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="hud">
+  <h2>Part Assembly + Connections</h2>
+  <div id="fps-value">--</div>
+  <div id="fps-label">FPS</div>
+
+  <div class="hud-row">
+    <label>Assembly Time</label>
+    <span class="value" id="assembly-time">--</span>
+  </div>
+  <div class="hud-row">
+    <label>Parts</label>
+    <span class="value" id="part-count">--</span>
+  </div>
+
+  <div class="control-group">
+    <div class="control-group-label">Presets</div>
+    <div class="btn-row">
+      <button class="btn" id="btn-ant">Ant Worker</button>
+      <button class="btn" id="btn-wasp">War Wasp</button>
+      <button class="btn" id="btn-beetle">Tank Beetle</button>
+      <button class="btn" id="btn-spider">Seer Spider</button>
+    </div>
+  </div>
+
+  <div class="control-group">
+    <div class="control-group-label">Actions</div>
+    <div class="btn-row">
+      <button class="btn" id="btn-walk">Walk</button>
+      <button class="btn" id="btn-shake">Shake</button>
+    </div>
+  </div>
+
+  <div id="controls-hint">
+    Click part: detach &middot; Drag: orbit &middot; Scroll: zoom
+  </div>
+  <div id="renderer-info">Initializing...</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ===========================================================================
+// CONSTANTS
+// ===========================================================================
+
+// --- Part Geometry ---
+const CORE_RADIUS = 0.3;
+const CORE_SEGMENTS_W = 16;
+const CORE_SEGMENTS_H = 12;
+
+const SEGMENT_RADIUS = 0.25;
+const SEGMENT_HEIGHT = 0.4;
+const SEGMENT_RADIAL_SEGMENTS = 12;
+
+const SHELL_RADIUS = 0.3;
+const SHELL_SEGMENTS_W = 16;
+const SHELL_SEGMENTS_H = 12;
+
+const ANTENNA_SHAFT_RADIUS = 0.02;
+const ANTENNA_LENGTH = 0.5;
+const ANTENNA_RADIAL_SEGMENTS = 6;
+const ANTENNA_TIP_RADIUS = 0.05;
+const ANTENNA_TIP_SEGMENTS = 8;
+
+const MANDIBLE_RADIUS = 0.06;
+const MANDIBLE_LENGTH = 0.25;
+const MANDIBLE_RADIAL_SEGMENTS = 8;
+const MANDIBLE_SPREAD = 0.08;
+const MANDIBLE_OPEN_ANGLE = 0.4;
+const MANDIBLE_FREQ = 2.0;
+
+const EYE_RADIUS = 0.08;
+const EYE_SEGMENTS = 10;
+const EYE_STALK_RADIUS = 0.015;
+const EYE_STALK_LENGTH = 0.15;
+const EYE_STALK_SEGMENTS = 6;
+
+const LEG_BONE_RADIUS = 0.02;
+const LEG_BONE_RADIAL = 6;
+const LEG_BONE_LENGTH = 0.3;
+const LEG_BONE_COUNT = 3;
+const LEG_JOINT_RADIUS = 0.03;
+const LEG_JOINT_SEGMENTS = 6;
+
+// --- Port Positions ---
+const CORE_PORTS = {
+  top:    new THREE.Vector3(0, 0.3, 0),
+  bottom: new THREE.Vector3(0, -0.3, 0),
+  front:  new THREE.Vector3(0, 0, 0.3),
+  back:   new THREE.Vector3(0, 0, -0.3),
+  left:   new THREE.Vector3(-0.3, 0, 0),
+  right:  new THREE.Vector3(0.3, 0, 0),
+};
+
+const SEGMENT_PORTS = {
+  front:  new THREE.Vector3(0, 0, 0.2),
+  back:   new THREE.Vector3(0, 0, -0.2),
+  top:    new THREE.Vector3(0, 0.25, 0),
+  bottom: new THREE.Vector3(0, -0.25, 0),
+  left:   new THREE.Vector3(-0.25, 0, 0),
+  right:  new THREE.Vector3(0.25, 0, 0),
+};
+
+// --- Connection Physics ---
+const SPRING_STIFFNESS = 50;
+const SPRING_DAMPING = 3;
+const BALL_JOINT_CONE_ANGLE = Math.PI / 4;
+const HINGE_AMPLITUDE = 0.4;
+
+// --- Detach Physics ---
+const DETACH_FADE_DURATION = 2.0;
+const DETACH_TUMBLE_SPEED = 5.0;
+const GRAVITY = -9.8;
+const GROUND_BOUNCE_DAMPING = 0.3;
+const DETACH_RANDOM_VEL = 1.5;
+const GROUND_Y = 0;
+
+// --- IK / Locomotion ---
+const IK_ITERATIONS = 5;
+const WALK_SPEED = 1.5;
+const WALK_BODY_HEIGHT = 0.5;
+const STEP_THRESHOLD = 0.4;
+const STEP_HEIGHT = 0.2;
+const STEP_DURATION = 0.15;
+const HIP_OUTWARD_FACTOR = 1.8;
+const STEP_PREDICT_FACTOR = 1.5;
+const PARABOLIC_ARC_PEAK = 4;
+const BOB_AMPLITUDE = 0.03;
+const BOB_FREQ_SCALE = 1.2;
+const KNEE_DROP_FACTOR = 0.5;
+
+// --- Shake ---
+const SHAKE_IMPULSE = 8.0;
+const SHAKE_DURATION = 0.3;
+const SHAKE_FREQ_X = 60;
+const SHAKE_FREQ_Y = 47;
+const SHAKE_FREQ_Z = 53;
+const SHAKE_OFFSET_X = 0.1;
+const SHAKE_OFFSET_Y = 0.05;
+const SHAKE_OFFSET_Z = 0.08;
+const SHAKE_DECAY_LERP = 0.1;
+
+// --- Scene ---
+const GROUND_SIZE = 40;
+const GROUND_DIVISIONS = 40;
+const GROUND_COLOR = 0x2a2a4a;
+const GROUND_GRID_COLOR = 0x3a3a5a;
+const GRID_OPACITY = 0.15;
+const GRID_Y_OFFSET = 0.001;
+
+const CAMERA_FOV = 45;
+const CAMERA_NEAR = 0.1;
+const CAMERA_FAR = 500;
+const CAMERA_INITIAL_POS = new THREE.Vector3(3, 2.5, 3);
+const CAMERA_LOOK_AT = new THREE.Vector3(0, 0.3, 0);
+
+const AMBIENT_COLOR = 0x8888cc;
+const AMBIENT_INTENSITY = 0.6;
+const DIR_COLOR = 0xffffff;
+const DIR_INTENSITY = 1.2;
+const DIR_POS = new THREE.Vector3(10, 20, 10);
+const HEMI_SKY = 0x6688cc;
+const HEMI_GND = 0x2a2a4a;
+const HEMI_INTENSITY = 0.3;
+
+const FOG_NEAR = 30;
+const FOG_FAR = 80;
+const BG_COLOR = 0x1a1a2e;
+
+// --- FPS ---
+const FPS_SAMPLE_MS = 250;
+const FPS_GOOD = 50;
+const FPS_WARN = 30;
+const FPS_COLOR_GOOD = '#4ade80';
+const FPS_COLOR_WARN = '#facc15';
+const FPS_COLOR_BAD = '#f87171';
+
+// --- Color ---
+const BASE_SAT = 0.65;
+const BASE_LIT = 0.55;
+const DESAT_SHIFT = -0.15;
+const DARK_SHIFT = -0.15;
+const EMISSIVE_INT = 0.4;
+const HUE_SHIFT = 0.08;
+const WARM_HUE_SHIFT = 0.05;
+const LEG_DARKEN = 0.8;
+
+// --- Spring max displacement clamp ---
+const SPRING_MAX_DISPLACEMENT = 0.5;
+
+// --- Wing hinge frequency multiplier ---
+const WING_HINGE_FREQ_MULT = 2;
+
+// ===========================================================================
+// CREATURE PRESETS
+// ===========================================================================
+const PRESETS = {
+  ant: {
+    name: "Ant Worker",
+    hue: 0.08,
+    parts: [
+      { t: "core", id: 0 },
+      { t: "segment", id: 1, p: 0, port: "back", c: "magnetic" },
+      { t: "segment", id: 10, p: 1, port: "back", c: "magnetic" },
+      { t: "leg", id: 2, p: 0, port: "left", c: "ball_joint" },
+      { t: "leg", id: 3, p: 0, port: "right", c: "ball_joint" },
+      { t: "leg", id: 4, p: 1, port: "left", c: "ball_joint" },
+      { t: "leg", id: 5, p: 1, port: "right", c: "ball_joint" },
+      { t: "mandible", id: 6, p: 0, port: "front", c: "hinge" },
+      { t: "antenna", id: 7, p: 0, port: "top", c: "spring" },
+      { t: "shell", id: 8, p: 10, port: "top", c: "magnetic" },
+    ]
+  },
+  wasp: {
+    name: "War Wasp",
+    hue: 0.15,
+    parts: [
+      { t: "core", id: 0 },
+      { t: "segment", id: 1, p: 0, port: "back", c: "magnetic" },
+      { t: "segment", id: 2, p: 1, port: "back", c: "magnetic" },
+      { t: "leg", id: 3, p: 0, port: "left", c: "ball_joint" },
+      { t: "leg", id: 4, p: 0, port: "right", c: "ball_joint" },
+      { t: "leg", id: 5, p: 1, port: "left", c: "ball_joint" },
+      { t: "leg", id: 6, p: 1, port: "right", c: "ball_joint" },
+      { t: "shell", id: 7, p: 0, port: "top", c: "hinge" },
+      { t: "shell", id: 8, p: 1, port: "top", c: "hinge" },
+      { t: "mandible", id: 9, p: 2, port: "front", c: "hinge" },
+      { t: "eye", id: 10, p: 0, port: "front", c: "spring" },
+    ]
+  },
+  beetle: {
+    name: "Tank Beetle",
+    hue: 0.35,
+    parts: [
+      { t: "core", id: 0 },
+      { t: "segment", id: 1, p: 0, port: "back", c: "magnetic" },
+      { t: "shell", id: 2, p: 0, port: "top", c: "magnetic" },
+      { t: "shell", id: 3, p: 1, port: "top", c: "magnetic" },
+      { t: "leg", id: 4, p: 0, port: "left", c: "ball_joint" },
+      { t: "leg", id: 5, p: 0, port: "right", c: "ball_joint" },
+      { t: "leg", id: 6, p: 1, port: "left", c: "ball_joint" },
+      { t: "leg", id: 7, p: 1, port: "right", c: "ball_joint" },
+      { t: "mandible", id: 8, p: 0, port: "front", c: "hinge" },
+      { t: "eye", id: 9, p: 0, port: "front", c: "spring" },
+    ]
+  },
+  spider: {
+    name: "Seer Spider",
+    hue: 0.75,
+    parts: [
+      { t: "core", id: 0 },
+      { t: "segment", id: 1, p: 0, port: "back", c: "magnetic" },
+      { t: "segment", id: 2, p: 1, port: "back", c: "magnetic" },
+      { t: "segment", id: 3, p: 2, port: "back", c: "magnetic" },
+      { t: "leg", id: 4, p: 0, port: "left", c: "ball_joint" },
+      { t: "leg", id: 5, p: 0, port: "right", c: "ball_joint" },
+      { t: "leg", id: 6, p: 1, port: "left", c: "ball_joint" },
+      { t: "leg", id: 7, p: 1, port: "right", c: "ball_joint" },
+      { t: "leg", id: 8, p: 2, port: "left", c: "ball_joint" },
+      { t: "leg", id: 9, p: 2, port: "right", c: "ball_joint" },
+      { t: "leg", id: 10, p: 3, port: "left", c: "ball_joint" },
+      { t: "leg", id: 11, p: 3, port: "right", c: "ball_joint" },
+      { t: "antenna", id: 12, p: 0, port: "top", c: "spring" },
+      { t: "antenna", id: 13, p: 1, port: "top", c: "spring" },
+      { t: "eye", id: 14, p: 0, port: "front", c: "spring" },
+    ]
+  }
+};
+
+// ===========================================================================
+// DOM REFS
+// ===========================================================================
+const fpsValueEl = document.getElementById('fps-value');
+const assemblyTimeEl = document.getElementById('assembly-time');
+const partCountEl = document.getElementById('part-count');
+const rendererInfoEl = document.getElementById('renderer-info');
+const btnWalk = document.getElementById('btn-walk');
+const btnShake = document.getElementById('btn-shake');
+
+// ===========================================================================
+// SCENE SETUP
+// ===========================================================================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(BG_COLOR);
+scene.fog = new THREE.Fog(BG_COLOR, FOG_NEAR, FOG_FAR);
+
+const camera = new THREE.PerspectiveCamera(CAMERA_FOV, innerWidth / innerHeight, CAMERA_NEAR, CAMERA_FAR);
+camera.position.copy(CAMERA_INITIAL_POS);
+camera.lookAt(CAMERA_LOOK_AT);
+
+scene.add(new THREE.AmbientLight(AMBIENT_COLOR, AMBIENT_INTENSITY));
+const dirLight = new THREE.DirectionalLight(DIR_COLOR, DIR_INTENSITY);
+dirLight.position.copy(DIR_POS);
+scene.add(dirLight);
+scene.add(new THREE.HemisphereLight(HEMI_SKY, HEMI_GND, HEMI_INTENSITY));
+
+const groundMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE),
+  new THREE.MeshPhongMaterial({ color: GROUND_COLOR, shininess: 10 })
+);
+groundMesh.rotation.x = -Math.PI / 2;
+groundMesh.position.y = GROUND_Y;
+scene.add(groundMesh);
+
+const grid = new THREE.GridHelper(GROUND_SIZE, GROUND_DIVISIONS, GROUND_GRID_COLOR, GROUND_GRID_COLOR);
+grid.material.transparent = true;
+grid.material.opacity = GRID_OPACITY;
+grid.position.y = GROUND_Y + GRID_Y_OFFSET;
+scene.add(grid);
+
+// ===========================================================================
+// GEOMETRY CACHE
+// ===========================================================================
+const _geoCache = new Map();
+function geo(key, factory) {
+  if (!_geoCache.has(key)) _geoCache.set(key, factory());
+  return _geoCache.get(key);
+}
+
+// ===========================================================================
+// COLOR HELPERS
+// ===========================================================================
+function partColor(hue, type) {
+  const c = new THREE.Color();
+  switch (type) {
+    case 'core':     c.setHSL(hue, BASE_SAT, BASE_LIT); break;
+    case 'segment':  c.setHSL(hue, BASE_SAT + DESAT_SHIFT, BASE_LIT); break;
+    case 'leg':      c.setHSL((hue + HUE_SHIFT) % 1, BASE_SAT + DESAT_SHIFT, BASE_LIT + DARK_SHIFT); break;
+    case 'shell':    c.setHSL(hue, BASE_SAT, BASE_LIT + DARK_SHIFT); break;
+    case 'antenna':  c.setHSL((hue + HUE_SHIFT) % 1, BASE_SAT, BASE_LIT); break;
+    case 'mandible': c.setHSL((hue + WARM_HUE_SHIFT) % 1, BASE_SAT, BASE_LIT); break;
+    case 'eye':      c.setHSL((hue - HUE_SHIFT + 1) % 1, BASE_SAT, BASE_LIT); break;
+    default:         c.setHSL(hue, BASE_SAT, BASE_LIT);
+  }
+  return c;
+}
+
+function emissiveColor(hue, type) {
+  if (type === 'antenna' || type === 'eye') {
+    const shift = type === 'eye' ? -HUE_SHIFT : HUE_SHIFT;
+    return new THREE.Color().setHSL((hue + shift + 1) % 1, 0.8, 0.6);
+  }
+  return new THREE.Color(0x000000);
+}
+
+// ===========================================================================
+// PORT LOOKUP
+// ===========================================================================
+function portPos(partType, portName) {
+  if (partType === 'core') return CORE_PORTS[portName]?.clone() ?? new THREE.Vector3();
+  if (partType === 'segment') return SEGMENT_PORTS[portName]?.clone() ?? new THREE.Vector3();
+  return new THREE.Vector3();
+}
+
+function portDir(name) {
+  switch (name) {
+    case 'top':    return new THREE.Vector3(0, 1, 0);
+    case 'bottom': return new THREE.Vector3(0, -1, 0);
+    case 'front':  return new THREE.Vector3(0, 0, 1);
+    case 'back':   return new THREE.Vector3(0, 0, -1);
+    case 'left':   return new THREE.Vector3(-1, 0, 0);
+    case 'right':  return new THREE.Vector3(1, 0, 0);
+    default:       return new THREE.Vector3(0, 1, 0);
+  }
+}
+
+// ===========================================================================
+// FABRIK IK SOLVER
+// ===========================================================================
+function fabrikSolve(joints, target, iterations) {
+  const n = joints.length;
+  if (n < 2) return;
+  const lens = [];
+  for (let i = 0; i < n - 1; i++) lens.push(joints[i].distanceTo(joints[i + 1]));
+  const root = joints[0].clone();
+  for (let iter = 0; iter < iterations; iter++) {
+    joints[n - 1].copy(target);
+    for (let i = n - 2; i >= 0; i--) {
+      const d = joints[i].clone().sub(joints[i + 1]).normalize();
+      joints[i].copy(joints[i + 1]).add(d.multiplyScalar(lens[i]));
+    }
+    joints[0].copy(root);
+    for (let i = 0; i < n - 1; i++) {
+      const d = joints[i + 1].clone().sub(joints[i]).normalize();
+      joints[i + 1].copy(joints[i]).add(d.multiplyScalar(lens[i]));
+    }
+  }
+}
+
+// ===========================================================================
+// BUILD PART MESH
+// ===========================================================================
+function buildPartMesh(type, hue) {
+  const col = partColor(hue, type);
+  const emis = emissiveColor(hue, type);
+  const grp = new THREE.Group();
+  grp.userData.partType = type;
+
+  const phong = (c, opts = {}) => new THREE.MeshPhongMaterial({
+    color: c, flatShading: true, shininess: 20, ...opts
+  });
+
+  switch (type) {
+    case 'core': {
+      grp.add(new THREE.Mesh(
+        geo('core', () => new THREE.SphereGeometry(CORE_RADIUS, CORE_SEGMENTS_W, CORE_SEGMENTS_H)),
+        phong(col, { shininess: 30 })
+      ));
+      break;
+    }
+    case 'segment': {
+      const g = geo('seg', () => {
+        const g2 = new THREE.CylinderGeometry(SEGMENT_RADIUS, SEGMENT_RADIUS, SEGMENT_HEIGHT, SEGMENT_RADIAL_SEGMENTS);
+        g2.rotateX(Math.PI / 2); // align along Z
+        return g2;
+      });
+      grp.add(new THREE.Mesh(g, phong(col)));
+      break;
+    }
+    case 'shell': {
+      grp.add(new THREE.Mesh(
+        geo('shell', () => new THREE.SphereGeometry(SHELL_RADIUS, SHELL_SEGMENTS_W, SHELL_SEGMENTS_H, 0, Math.PI * 2, 0, Math.PI / 2)),
+        phong(col, { shininess: 40 })
+      ));
+      break;
+    }
+    case 'antenna': {
+      const shaft = new THREE.Mesh(
+        geo('a_shaft', () => new THREE.CylinderGeometry(ANTENNA_SHAFT_RADIUS, ANTENNA_SHAFT_RADIUS, ANTENNA_LENGTH, ANTENNA_RADIAL_SEGMENTS)),
+        phong(col, { shininess: 10 })
+      );
+      shaft.position.y = ANTENNA_LENGTH / 2;
+      grp.add(shaft);
+      const tip = new THREE.Mesh(
+        geo('a_tip', () => new THREE.SphereGeometry(ANTENNA_TIP_RADIUS, ANTENNA_TIP_SEGMENTS, ANTENNA_TIP_SEGMENTS)),
+        phong(emis, { emissive: emis, emissiveIntensity: EMISSIVE_INT, shininess: 50 })
+      );
+      tip.position.y = ANTENNA_LENGTH;
+      grp.add(tip);
+      break;
+    }
+    case 'mandible': {
+      const mat = phong(col, { shininess: 25 });
+      const cg = geo('mand', () => new THREE.ConeGeometry(MANDIBLE_RADIUS, MANDIBLE_LENGTH, MANDIBLE_RADIAL_SEGMENTS));
+      const left = new THREE.Mesh(cg, mat);
+      left.position.set(-MANDIBLE_SPREAD, 0, MANDIBLE_LENGTH / 2);
+      left.rotation.x = -Math.PI / 2;
+      left.userData.side = 'left';
+      grp.add(left);
+      const right = new THREE.Mesh(cg, mat.clone());
+      right.position.set(MANDIBLE_SPREAD, 0, MANDIBLE_LENGTH / 2);
+      right.rotation.x = -Math.PI / 2;
+      right.userData.side = 'right';
+      grp.add(right);
+      break;
+    }
+    case 'eye': {
+      const stalk = new THREE.Mesh(
+        geo('e_stalk', () => new THREE.CylinderGeometry(EYE_STALK_RADIUS, EYE_STALK_RADIUS, EYE_STALK_LENGTH, EYE_STALK_SEGMENTS)),
+        phong(col, { shininess: 10 })
+      );
+      stalk.position.z = EYE_STALK_LENGTH / 2;
+      stalk.rotation.x = Math.PI / 2;
+      grp.add(stalk);
+      const eye = new THREE.Mesh(
+        geo('e_ball', () => new THREE.SphereGeometry(EYE_RADIUS, EYE_SEGMENTS, EYE_SEGMENTS)),
+        phong(emis, { emissive: emis, emissiveIntensity: EMISSIVE_INT, shininess: 60 })
+      );
+      eye.position.z = EYE_STALK_LENGTH;
+      grp.add(eye);
+      break;
+    }
+    case 'leg': {
+      const mat = phong(col, { shininess: 10 });
+      const jMat = phong(col.clone().multiplyScalar(LEG_DARKEN), { shininess: 10 });
+      const bg = geo('l_bone', () => new THREE.CylinderGeometry(LEG_BONE_RADIUS, LEG_BONE_RADIUS, 1, LEG_BONE_RADIAL));
+      const jg = geo('l_joint', () => new THREE.SphereGeometry(LEG_JOINT_RADIUS, LEG_JOINT_SEGMENTS, LEG_JOINT_SEGMENTS));
+      for (let i = 0; i < LEG_BONE_COUNT; i++) {
+        const bone = new THREE.Mesh(bg, mat);
+        bone.userData.boneIdx = i;
+        grp.add(bone);
+        const jnt = new THREE.Mesh(jg, jMat);
+        jnt.userData.jointIdx = i;
+        grp.add(jnt);
+      }
+      // Foot joint
+      const foot = new THREE.Mesh(jg, jMat);
+      foot.userData.jointIdx = LEG_BONE_COUNT;
+      grp.add(foot);
+      break;
+    }
+  }
+  return grp;
+}
+
+// ===========================================================================
+// ASSEMBLED CREATURE
+// ===========================================================================
+class Creature {
+  constructor(scene, data) {
+    this.scene = scene;
+    this.data = data;
+    this.hue = data.hue;
+
+    this.root = new THREE.Group();
+    this.root.position.set(0, WALK_BODY_HEIGHT, 0);
+    scene.add(this.root);
+
+    // Maps: id -> info
+    this.parts = new Map();
+    this.detached = [];
+    this.springs = new Map();
+    this.legs = new Map();
+
+    // Walking
+    this.walking = false;
+    this.walkDir = new THREE.Vector3(0, 0, -1);
+    this.walkPos = new THREE.Vector3();
+    this.walkVel = new THREE.Vector3();
+
+    // Shake
+    this.shakeTimer = 0;
+    this.shakeVel = new THREE.Vector3();
+
+    // Build timing tracked externally
+    this._assemble();
+  }
+
+  _assemble() {
+    const { parts } = this.data;
+
+    // Create all parts
+    for (const def of parts) {
+      const mesh = buildPartMesh(def.t, this.hue);
+      mesh.userData.partId = def.id;
+      this.parts.set(def.id, {
+        mesh,
+        def,
+        conn: def.c ?? null,
+        parentId: def.p ?? null,
+        children: [],
+        port: def.port ?? null,
+        isCore: def.t === 'core',
+        // For spring: rest euler set after positioning
+        restEuler: null,
+      });
+    }
+
+    // Link parent-child
+    for (const def of parts) {
+      const info = this.parts.get(def.id);
+      if (info.parentId !== null && info.parentId !== undefined) {
+        const parent = this.parts.get(info.parentId);
+        if (parent) parent.children.push(def.id);
+      }
+    }
+
+    // Position from roots (cores)
+    for (const [id, info] of this.parts) {
+      if (info.parentId === null || info.parentId === undefined) {
+        this.root.add(info.mesh);
+        this._positionChildren(id);
+      }
+    }
+
+    // Init spring & leg state
+    for (const [id, info] of this.parts) {
+      if (info.conn === 'spring') {
+        info.restEuler = new THREE.Euler().copy(info.mesh.rotation);
+        this.springs.set(id, {
+          angVel: new THREE.Vector3(),
+          angDisp: new THREE.Vector3(),
+        });
+      }
+      if (info.def.t === 'leg') {
+        this._initLeg(id, info);
+      }
+    }
+  }
+
+  _positionChildren(parentId) {
+    const parent = this.parts.get(parentId);
+    for (const cid of parent.children) {
+      const child = this.parts.get(cid);
+      if (!child) continue;
+      const pp = portPos(parent.def.t, child.port);
+      child.mesh.position.copy(pp);
+      this._orientPart(child);
+      if (child.def.t !== 'leg') {
+        parent.mesh.add(child.mesh);
+      } else {
+        // Legs added to parent for transform hierarchy, IK updates positions
+        parent.mesh.add(child.mesh);
+      }
+      this._positionChildren(cid);
+    }
+  }
+
+  _orientPart(info) {
+    const { def, port } = info;
+    switch (def.t) {
+      case 'shell':
+        if (port === 'bottom') info.mesh.rotation.x = Math.PI;
+        break;
+      case 'antenna':
+        if (port === 'front') info.mesh.rotation.x = -Math.PI / 2;
+        else if (port === 'back') info.mesh.rotation.x = Math.PI / 2;
+        else if (port === 'left') info.mesh.rotation.z = Math.PI / 2;
+        else if (port === 'right') info.mesh.rotation.z = -Math.PI / 2;
+        break;
+      case 'mandible':
+        if (port === 'back') info.mesh.rotation.y = Math.PI;
+        else if (port === 'left') info.mesh.rotation.y = Math.PI / 2;
+        else if (port === 'right') info.mesh.rotation.y = -Math.PI / 2;
+        break;
+      case 'eye':
+        if (port === 'top') info.mesh.rotation.x = -Math.PI / 2;
+        else if (port === 'bottom') info.mesh.rotation.x = Math.PI / 2;
+        else if (port === 'back') info.mesh.rotation.y = Math.PI;
+        else if (port === 'left') info.mesh.rotation.y = Math.PI / 2;
+        else if (port === 'right') info.mesh.rotation.y = -Math.PI / 2;
+        break;
+    }
+  }
+
+  _initLeg(id, info) {
+    // Compute world hip position
+    this.root.updateMatrixWorld(true);
+    const hipWorld = new THREE.Vector3();
+    info.mesh.getWorldPosition(hipWorld);
+
+    const pDir = portDir(info.port);
+    const footTarget = hipWorld.clone().add(pDir.clone().multiplyScalar(LEG_BONE_LENGTH * HIP_OUTWARD_FACTOR));
+    footTarget.y = GROUND_Y;
+
+    // Build joint chain
+    const joints = [];
+    for (let i = 0; i <= LEG_BONE_COUNT; i++) {
+      const t = i / LEG_BONE_COUNT;
+      const p = hipWorld.clone().lerp(footTarget, t);
+      if (i > 0 && i < LEG_BONE_COUNT) p.y = hipWorld.y * (1 - t);
+      joints.push(p);
+    }
+
+    // Gait group: alternate by parent index + side
+    const isLeft = info.port === 'left';
+    const parentIdx = this.data.parts.findIndex(p => p.id === info.parentId);
+    const gaitGroup = (parentIdx + (isLeft ? 0 : 1)) % 2;
+
+    this.legs.set(id, {
+      joints,
+      planted: footTarget.clone(),
+      target: footTarget.clone(),
+      stepping: false,
+      stepProg: 0,
+      stepStart: footTarget.clone(),
+      stepEnd: footTarget.clone(),
+      gaitGroup,
+      pDir: pDir.clone(),
+      hipOff: hipWorld.clone().sub(this.root.position),
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // UPDATE
+  // -------------------------------------------------------------------------
+  update(dt, elapsed) {
+    if (dt <= 0 || dt > 0.1) return;
+
+    // Shake
+    if (this.shakeTimer > 0) {
+      this.shakeTimer -= dt;
+      const intensity = Math.max(0, this.shakeTimer / SHAKE_DURATION);
+      this.shakeVel.set(
+        Math.sin(elapsed * SHAKE_FREQ_X) * intensity * SHAKE_OFFSET_X * SHAKE_IMPULSE,
+        Math.cos(elapsed * SHAKE_FREQ_Y) * intensity * SHAKE_OFFSET_Y * SHAKE_IMPULSE,
+        Math.sin(elapsed * SHAKE_FREQ_Z) * intensity * SHAKE_OFFSET_Z * SHAKE_IMPULSE,
+      );
+    } else {
+      this.shakeVel.lerp(new THREE.Vector3(), SHAKE_DECAY_LERP);
+    }
+
+    // Walk
+    if (this.walking) {
+      this.walkVel.copy(this.walkDir).multiplyScalar(WALK_SPEED);
+      this.walkPos.add(this.walkVel.clone().multiplyScalar(dt));
+      this.root.position.x = this.walkPos.x;
+      this.root.position.z = this.walkPos.z;
+      this.root.position.y = WALK_BODY_HEIGHT + Math.sin(elapsed * BOB_FREQ_SCALE * WALK_SPEED * 10) * BOB_AMPLITUDE;
+      this._updateGait(dt);
+    }
+
+    // Connection physics
+    for (const [id, info] of this.parts) {
+      if (info.isCore) continue;
+      switch (info.conn) {
+        case 'hinge': this._tickHinge(id, info, elapsed); break;
+        case 'spring': this._tickSpring(id, info, dt); break;
+        case 'ball_joint':
+          if (info.def.t === 'leg') this._tickLegIK(id, info);
+          break;
+      }
+    }
+
+    // Detached
+    this._tickDetached(dt);
+  }
+
+  _tickHinge(id, info, elapsed) {
+    const mesh = info.mesh;
+    if (info.def.t === 'mandible') {
+      const angle = Math.sin(elapsed * Math.PI * 2 * MANDIBLE_FREQ) * MANDIBLE_OPEN_ANGLE;
+      mesh.children.forEach(c => {
+        if (c.userData.side === 'left') c.rotation.z = angle;
+        else if (c.userData.side === 'right') c.rotation.z = -angle;
+      });
+    } else if (info.def.t === 'shell') {
+      mesh.rotation.z = Math.sin(elapsed * Math.PI * 2 * MANDIBLE_FREQ * WING_HINGE_FREQ_MULT) * HINGE_AMPLITUDE;
+    } else {
+      mesh.rotation.x = Math.sin(elapsed * Math.PI * 2 * MANDIBLE_FREQ) * HINGE_AMPLITUDE;
+    }
+  }
+
+  _tickSpring(id, info, dt) {
+    const s = this.springs.get(id);
+    if (!s) return;
+
+    // External driving force from body motion
+    const ext = this.shakeVel.clone();
+    if (this.walking) ext.add(this.walkVel);
+
+    // F = -k*x - c*v + external
+    const force = s.angDisp.clone().multiplyScalar(-SPRING_STIFFNESS)
+      .add(s.angVel.clone().multiplyScalar(-SPRING_DAMPING))
+      .add(ext.clone().multiplyScalar(dt * SPRING_STIFFNESS));
+
+    s.angVel.add(force.clone().multiplyScalar(dt));
+    s.angDisp.add(s.angVel.clone().multiplyScalar(dt));
+    s.angDisp.clampLength(0, SPRING_MAX_DISPLACEMENT);
+
+    // Apply displacement ON TOP of rest rotation
+    if (info.restEuler) {
+      info.mesh.rotation.set(
+        info.restEuler.x + s.angDisp.x,
+        info.restEuler.y + s.angDisp.y,
+        info.restEuler.z + s.angDisp.z,
+      );
+    }
+  }
+
+  _tickLegIK(id, info) {
+    const ls = this.legs.get(id);
+    if (!ls) return;
+
+    // Hip world pos
+    const parentInfo = this.parts.get(info.parentId);
+    if (!parentInfo) return;
+
+    const pp = portPos(parentInfo.def.t, info.port);
+    const hipWorld = pp.clone();
+    parentInfo.mesh.updateMatrixWorld(true);
+    parentInfo.mesh.localToWorld(hipWorld);
+
+    ls.hipOff.copy(hipWorld).sub(this.root.position);
+    ls.joints[0].copy(hipWorld);
+
+    // Solve
+    const reach = LEG_BONE_LENGTH * LEG_BONE_COUNT;
+    const dist = hipWorld.distanceTo(ls.target);
+    if (dist > reach * 0.95) {
+      const dir = ls.target.clone().sub(hipWorld).normalize();
+      for (let i = 1; i <= LEG_BONE_COUNT; i++) {
+        ls.joints[i].copy(hipWorld).add(dir.clone().multiplyScalar(LEG_BONE_LENGTH * i));
+      }
+    } else {
+      fabrikSolve(ls.joints, ls.target, IK_ITERATIONS);
+    }
+
+    // Update bone meshes
+    const mesh = info.mesh;
+    mesh.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+
+    const bones = mesh.children.filter(c => c.userData.boneIdx !== undefined);
+    const jnts = mesh.children.filter(c => c.userData.jointIdx !== undefined);
+
+    for (let i = 0; i <= LEG_BONE_COUNT; i++) {
+      const local = ls.joints[i].clone().applyMatrix4(inv);
+      const jm = jnts.find(j => j.userData.jointIdx === i);
+      if (jm) jm.position.copy(local);
+    }
+
+    for (let i = 0; i < LEG_BONE_COUNT; i++) {
+      const a = ls.joints[i].clone().applyMatrix4(inv);
+      const b = ls.joints[i + 1].clone().applyMatrix4(inv);
+      const mid = a.clone().add(b).multiplyScalar(0.5);
+      const len = a.distanceTo(b);
+      const bm = bones.find(x => x.userData.boneIdx === i);
+      if (bm) {
+        bm.position.copy(mid);
+        bm.scale.set(1, len, 1);
+        const dir = b.clone().sub(a).normalize();
+        bm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      }
+    }
+  }
+
+  _updateGait(dt) {
+    const active = [];
+    for (const [id, ls] of this.legs) {
+      if (this.parts.has(id)) active.push({ id, ls });
+    }
+    if (active.length === 0) return;
+
+    let anyStepping = false;
+    for (const { ls } of active) {
+      if (ls.stepping) {
+        anyStepping = true;
+        ls.stepProg += dt / STEP_DURATION;
+        if (ls.stepProg >= 1) {
+          ls.stepProg = 1;
+          ls.stepping = false;
+          ls.planted.copy(ls.stepEnd);
+          ls.target.copy(ls.stepEnd);
+        } else {
+          const t = ls.stepProg;
+          ls.target.set(
+            ls.stepStart.x + (ls.stepEnd.x - ls.stepStart.x) * t,
+            GROUND_Y + STEP_HEIGHT * PARABOLIC_ARC_PEAK * t * (1 - t),
+            ls.stepStart.z + (ls.stepEnd.z - ls.stepStart.z) * t,
+          );
+        }
+      }
+    }
+
+    if (!anyStepping) {
+      let worstGroup = -1, worstDist = 0;
+      for (const { ls } of active) {
+        const hip = this.root.position.clone().add(ls.hipOff);
+        const desired = hip.clone().add(ls.pDir.clone().multiplyScalar(LEG_BONE_LENGTH * HIP_OUTWARD_FACTOR));
+        desired.y = GROUND_Y;
+        desired.add(this.walkVel.clone().multiplyScalar(STEP_PREDICT_FACTOR * STEP_DURATION));
+        const d = desired.distanceTo(ls.planted);
+        if (d > STEP_THRESHOLD && d > worstDist) { worstDist = d; worstGroup = ls.gaitGroup; }
+      }
+      if (worstGroup >= 0) {
+        for (const { ls } of active) {
+          if (ls.gaitGroup === worstGroup) {
+            const hip = this.root.position.clone().add(ls.hipOff);
+            const desired = hip.clone().add(ls.pDir.clone().multiplyScalar(LEG_BONE_LENGTH * HIP_OUTWARD_FACTOR));
+            desired.y = GROUND_Y;
+            desired.add(this.walkVel.clone().multiplyScalar(STEP_PREDICT_FACTOR * STEP_DURATION));
+            ls.stepping = true;
+            ls.stepProg = 0;
+            ls.stepStart.copy(ls.planted);
+            ls.stepEnd.copy(desired);
+          }
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // ACTIONS
+  // -------------------------------------------------------------------------
+  shake() {
+    this.shakeTimer = SHAKE_DURATION;
+    this.shakeVel.set(
+      (Math.random() - 0.5) * SHAKE_IMPULSE,
+      (Math.random() - 0.5) * SHAKE_IMPULSE * 0.5,
+      (Math.random() - 0.5) * SHAKE_IMPULSE,
+    );
+  }
+
+  toggleWalk() {
+    this.walking = !this.walking;
+    if (!this.walking) this.walkVel.set(0, 0, 0);
+    return this.walking;
+  }
+
+  // -------------------------------------------------------------------------
+  // DETACH
+  // -------------------------------------------------------------------------
+  detachPart(partId) {
+    const info = this.parts.get(partId);
+    if (!info || info.isCore) return;
+
+    info.mesh.updateMatrixWorld(true);
+    const wp = new THREE.Vector3();
+    const wq = new THREE.Quaternion();
+    const ws = new THREE.Vector3();
+    info.mesh.matrixWorld.decompose(wp, wq, ws);
+
+    if (info.mesh.parent) info.mesh.parent.remove(info.mesh);
+
+    // Recursively detach children
+    for (const cid of [...info.children]) this.detachPart(cid);
+
+    // Unlink from parent
+    if (info.parentId !== null && info.parentId !== undefined) {
+      const parent = this.parts.get(info.parentId);
+      if (parent) parent.children = parent.children.filter(c => c !== partId);
+    }
+
+    this.parts.delete(partId);
+    this.springs.delete(partId);
+    this.legs.delete(partId);
+
+    // Place in world
+    info.mesh.position.copy(wp);
+    info.mesh.quaternion.copy(wq);
+    info.mesh.scale.copy(ws);
+    this.scene.add(info.mesh);
+
+    const vel = new THREE.Vector3(
+      (Math.random() - 0.5) * DETACH_RANDOM_VEL,
+      Math.random() * DETACH_RANDOM_VEL,
+      (Math.random() - 0.5) * DETACH_RANDOM_VEL,
+    );
+    if (this.walking) vel.add(this.walkVel);
+
+    const tumbleAxis = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+
+    this.detached.push({
+      mesh: info.mesh,
+      vel,
+      tumbleAxis,
+      tumbleSpd: DETACH_TUMBLE_SPEED,
+      age: 0,
+      bounced: false,
+      mats: this._collectMats(info.mesh),
+    });
+
+    partCountEl.textContent = this.parts.size;
+  }
+
+  _collectMats(mesh) {
+    const out = [];
+    mesh.traverse(c => {
+      if (c.isMesh && c.material) {
+        c.material.transparent = true;
+        c.material.opacity = 1;
+        out.push(c.material);
+      }
+    });
+    return out;
+  }
+
+  _tickDetached(dt) {
+    for (let i = this.detached.length - 1; i >= 0; i--) {
+      const d = this.detached[i];
+      d.age += dt;
+      d.vel.y += GRAVITY * dt;
+      d.mesh.position.add(d.vel.clone().multiplyScalar(dt));
+      d.mesh.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(d.tumbleAxis, d.tumbleSpd * dt));
+
+      if (d.mesh.position.y <= GROUND_Y && !d.bounced) {
+        d.mesh.position.y = GROUND_Y;
+        d.vel.y = Math.abs(d.vel.y) * GROUND_BOUNCE_DAMPING;
+        d.vel.x *= GROUND_BOUNCE_DAMPING;
+        d.vel.z *= GROUND_BOUNCE_DAMPING;
+        d.tumbleSpd *= GROUND_BOUNCE_DAMPING;
+        d.bounced = true;
+      }
+      if (d.bounced && d.mesh.position.y <= GROUND_Y) {
+        d.mesh.position.y = GROUND_Y;
+        d.vel.set(0, 0, 0);
+        d.tumbleSpd = 0;
+      }
+
+      const fade = Math.min(d.age / DETACH_FADE_DURATION, 1);
+      for (const m of d.mats) m.opacity = 1 - fade;
+
+      if (fade >= 1) {
+        this.scene.remove(d.mesh);
+        d.mesh.traverse(c => { if (c.isMesh) { c.geometry?.dispose(); c.material?.dispose(); } });
+        this.detached.splice(i, 1);
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // RAYCASTING
+  // -------------------------------------------------------------------------
+  getClickTargets() {
+    const targets = [];
+    for (const [id, info] of this.parts) {
+      if (!info.isCore) {
+        info.mesh.traverse(c => {
+          if (c.isMesh) { c.userData.ownerId = id; targets.push(c); }
+        });
+      }
+    }
+    return targets;
+  }
+
+  dispose() {
+    for (const [, info] of this.parts) {
+      info.mesh.traverse(c => { if (c.isMesh) { c.geometry?.dispose(); c.material?.dispose(); } });
+    }
+    this.scene.remove(this.root);
+    for (const d of this.detached) this.scene.remove(d.mesh);
+    this.detached = [];
+  }
+}
+
+// ===========================================================================
+// APP STATE
+// ===========================================================================
+let creature = null;
+let renderer = null;
+let controls = null;
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+// ===========================================================================
+// ASSEMBLY
+// ===========================================================================
+function assemble(key) {
+  const t0 = performance.now();
+  if (creature) { creature.dispose(); creature = null; }
+  creature = new Creature(scene, PRESETS[key]);
+  const ms = (performance.now() - t0).toFixed(2);
+  assemblyTimeEl.textContent = ms + ' ms';
+  partCountEl.textContent = creature.parts.size;
+  btnWalk.classList.remove('active');
+}
+
+// ===========================================================================
+// RENDERER
+// ===========================================================================
+async function initRenderer() {
+  try {
+    renderer = new THREE.WebGPURenderer({ antialias: true });
+    renderer.setPixelRatio(devicePixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    document.body.appendChild(renderer.domElement);
+    await renderer.init();
+    rendererInfoEl.textContent = 'Renderer: WebGPU';
+  } catch (err) {
+    console.warn('WebGPU unavailable, falling back:', err);
+    if (renderer?.domElement?.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(devicePixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    document.body.appendChild(renderer.domElement);
+    rendererInfoEl.textContent = 'Renderer: WebGL (fallback)';
+  }
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.1;
+  controls.rotateSpeed = 0.8;
+  controls.zoomSpeed = 1.2;
+  controls.target.copy(CAMERA_LOOK_AT);
+  controls.update();
+}
+
+// ===========================================================================
+// FPS
+// ===========================================================================
+let fpsFrames = 0, fpsLast = 0;
+function tickFps(now) {
+  fpsFrames++;
+  if (now - fpsLast >= FPS_SAMPLE_MS) {
+    const fps = Math.round(fpsFrames * 1000 / (now - fpsLast));
+    fpsFrames = 0;
+    fpsLast = now;
+    fpsValueEl.textContent = fps;
+    fpsValueEl.style.color = fps >= FPS_GOOD ? FPS_COLOR_GOOD : fps >= FPS_WARN ? FPS_COLOR_WARN : FPS_COLOR_BAD;
+  }
+}
+
+// ===========================================================================
+// INPUT
+// ===========================================================================
+function onPointerDown(e) {
+  if (e.target.closest('#hud')) return;
+  mouse.x = (e.clientX / innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+  if (!creature) return;
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(creature.getClickTargets(), false);
+  if (hits.length > 0) {
+    const pid = hits[0].object.userData.ownerId;
+    if (pid !== undefined) creature.detachPart(pid);
+  }
+}
+
+// ===========================================================================
+// EVENT LISTENERS
+// ===========================================================================
+document.getElementById('btn-ant').addEventListener('click', () => assemble('ant'));
+document.getElementById('btn-wasp').addEventListener('click', () => assemble('wasp'));
+document.getElementById('btn-beetle').addEventListener('click', () => assemble('beetle'));
+document.getElementById('btn-spider').addEventListener('click', () => assemble('spider'));
+btnWalk.addEventListener('click', () => {
+  if (!creature) return;
+  btnWalk.classList.toggle('active', creature.toggleWalk());
+});
+btnShake.addEventListener('click', () => { if (creature) creature.shake(); });
+window.addEventListener('pointerdown', onPointerDown);
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ===========================================================================
+// MAIN
+// ===========================================================================
+async function main() {
+  await initRenderer();
+  assemble('ant');
+  fpsLast = performance.now();
+
+  const clock = new THREE.Clock();
+  function loop() {
+    const dt = clock.getDelta();
+    const elapsed = clock.getElapsedTime();
+    if (creature) creature.update(dt, elapsed);
+    tickFps(performance.now());
+    controls.update();
+    renderer.render(scene, camera);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+}
+
+main().catch(err => {
+  console.error(err);
+  rendererInfoEl.textContent = 'Error: ' + err.message;
+});
+</script>
+</body>
+</html>

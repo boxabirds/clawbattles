@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POC 3.5: Multi-User Creatures</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+    canvas { display: block; }
+
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      color: #e0e0e0;
+      background: rgba(10, 10, 30, 0.85);
+      padding: 16px 20px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      min-width: 280px;
+      backdrop-filter: blur(8px);
+      user-select: none;
+    }
+
+    #hud h2 {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #888;
+      margin-bottom: 12px;
+    }
+
+    .stat {
+      margin: 4px 0;
+      font-size: 13px;
+    }
+
+    .stat label {
+      color: #888;
+    }
+
+    .stat .value {
+      font-weight: 600;
+      color: #e0e0e0;
+    }
+
+    #conn-status {
+      font-weight: 600;
+    }
+
+    #fps-display {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 2px;
+    }
+
+    #fps-label {
+      font-size: 11px;
+      color: #888;
+      margin-bottom: 10px;
+    }
+
+    .control-group {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .control-group-label {
+      font-size: 11px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+
+    .btn-group button {
+      padding: 4px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.05);
+      color: #ccc;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .btn-group button:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .btn-group button.active {
+      background: rgba(108, 99, 255, 0.3);
+      border-color: #6c63ff;
+      color: #fff;
+    }
+
+    .color-group {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+
+    .color-btn {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .color-btn:hover {
+      transform: scale(1.15);
+    }
+
+    .color-btn.active {
+      border-color: #fff;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+    }
+
+    .selection-preview {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #aaa;
+    }
+
+    .selection-preview .preview-dot {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+
+    #event-log {
+      position: fixed;
+      bottom: 16px;
+      left: 16px;
+      z-index: 10;
+      color: #aaa;
+      background: rgba(10, 10, 30, 0.85);
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      max-width: 400px;
+      max-height: 180px;
+      overflow-y: auto;
+      font-size: 11px;
+      font-family: monospace;
+      line-height: 1.6;
+      backdrop-filter: blur(8px);
+    }
+
+    #controls-hint {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 10;
+      color: #555;
+      font-size: 11px;
+      text-align: right;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <h2>SWARM - Multi-User Creatures</h2>
+    <div id="fps-display">--</div>
+    <div id="fps-label">FPS</div>
+
+    <div class="stat"><label>Connection: </label><span id="conn-status" style="color:#f87171">Connecting...</span></div>
+    <div class="stat"><label>Players: </label><span class="value" id="player-count">0</span></div>
+    <div class="stat"><label>Creatures: </label><span class="value" id="creature-count">0</span></div>
+
+    <div class="control-group">
+      <div class="control-group-label">Legs</div>
+      <div class="btn-group" id="leg-buttons">
+        <button data-legs="2">2</button>
+        <button data-legs="4" class="active">4</button>
+        <button data-legs="6">6</button>
+        <button data-legs="8">8</button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <div class="control-group-label">Color</div>
+      <div class="color-group" id="color-buttons">
+        <button class="color-btn active" data-hue="0" style="background: hsl(0, 70%, 50%)"></button>
+        <button class="color-btn" data-hue="0.083" style="background: hsl(30, 70%, 50%)"></button>
+        <button class="color-btn" data-hue="0.167" style="background: hsl(60, 70%, 50%)"></button>
+        <button class="color-btn" data-hue="0.333" style="background: hsl(120, 70%, 50%)"></button>
+        <button class="color-btn" data-hue="0.5" style="background: hsl(180, 70%, 50%)"></button>
+        <button class="color-btn" data-hue="0.667" style="background: hsl(240, 70%, 50%)"></button>
+        <button class="color-btn" data-hue="0.778" style="background: hsl(280, 70%, 50%)"></button>
+        <button class="color-btn" data-hue="0.917" style="background: hsl(330, 70%, 50%)"></button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <div class="control-group-label">Speed: <span id="speed-value">2.0</span></div>
+      <input type="range" id="speed-slider" min="0.5" max="10" step="0.5" value="2.0"
+        style="width: 100%; accent-color: #6c63ff;">
+    </div>
+
+    <div class="selection-preview">
+      Spawn: <span class="preview-dot" id="preview-dot" style="background: hsl(0, 65%, 55%)"></span>
+      <span id="preview-label">4 legs, red</span>
+    </div>
+
+    <div class="control-group">
+      <button id="reset-btn" style="width:100%; padding:6px 12px; border:1px solid rgba(255,80,80,0.4); background:rgba(255,80,80,0.15); color:#f87171; border-radius:4px; font-size:12px; cursor:pointer;">Reset All Creatures</button>
+    </div>
+  </div>
+
+  <div id="event-log"></div>
+  <div id="controls-hint">
+    Left-click: spawn creature<br>
+    Right-click creature: select<br>
+    Right-click ground: move selected<br>
+    Drag: orbit &middot; Scroll: zoom
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

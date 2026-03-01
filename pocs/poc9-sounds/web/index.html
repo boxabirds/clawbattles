@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POC 9: Generative Creature Sounds</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .app {
+      max-width: 720px;
+      width: 100%;
+    }
+
+    h1 {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      font-size: 12px;
+      color: #555;
+      margin-bottom: 24px;
+    }
+
+    /* Panels */
+    .panel {
+      background: rgba(10, 10, 30, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 12px;
+      backdrop-filter: blur(8px);
+    }
+
+    .panel-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #666;
+      margin-bottom: 12px;
+    }
+
+    /* Init button */
+    #btn-init {
+      width: 100%;
+      padding: 14px;
+      font-size: 16px;
+      font-weight: 600;
+      background: rgba(108, 99, 255, 0.3);
+      border: 1px solid #6c63ff;
+      color: #fff;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+      margin-bottom: 12px;
+    }
+    #btn-init:hover:not(:disabled) { background: rgba(108, 99, 255, 0.5); }
+    #btn-init:disabled { opacity: 0.5; cursor: default; }
+
+    /* Status */
+    #status {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fbbf24;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    /* Sound trigger buttons */
+    .trigger-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .trigger-btn {
+      padding: 12px 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.05);
+      color: #ccc;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.1s;
+      text-align: center;
+      line-height: 1.3;
+    }
+    .trigger-btn:hover:not(:disabled) {
+      background: rgba(108, 99, 255, 0.2);
+      border-color: #6c63ff;
+    }
+    .trigger-btn:active:not(:disabled) {
+      background: rgba(108, 99, 255, 0.4);
+      transform: scale(0.97);
+    }
+    .trigger-btn:disabled { opacity: 0.3; cursor: default; }
+
+    .trigger-key {
+      display: block;
+      font-size: 10px;
+      color: #555;
+      margin-top: 4px;
+    }
+
+    /* Action buttons */
+    .action-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .action-btn {
+      flex: 1;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.1s;
+    }
+    .action-btn:disabled { opacity: 0.3; cursor: default; }
+
+    #btn-stress {
+      background: rgba(248, 113, 113, 0.15);
+      border: 1px solid rgba(248, 113, 113, 0.4);
+      color: #f87171;
+    }
+    #btn-stress:hover:not(:disabled) { background: rgba(248, 113, 113, 0.3); }
+
+    #btn-release {
+      background: rgba(74, 222, 128, 0.15);
+      border: 1px solid rgba(74, 222, 128, 0.4);
+      color: #4ade80;
+    }
+    #btn-release:hover:not(:disabled) { background: rgba(74, 222, 128, 0.3); }
+
+    /* Sliders */
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .slider-label {
+      font-size: 12px;
+      color: #aaa;
+      min-width: 90px;
+    }
+
+    .slider-row input[type="range"] {
+      flex: 1;
+      accent-color: #6c63ff;
+      height: 4px;
+    }
+
+    .slider-val {
+      font-size: 12px;
+      font-weight: 600;
+      color: #e0e0e0;
+      min-width: 36px;
+      text-align: right;
+      font-family: 'SF Mono', 'Cascadia Code', monospace;
+    }
+
+    .slider-hint {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #444;
+      margin-top: -6px;
+      margin-bottom: 8px;
+      padding: 0 102px 0 102px;
+    }
+
+    /* Telemetry */
+    .tel-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .tel-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .tel-label {
+      font-size: 10px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .tel-value {
+      font-size: 18px;
+      font-weight: 700;
+      font-family: 'SF Mono', 'Cascadia Code', monospace;
+      line-height: 1;
+    }
+
+    /* Bars */
+    .bar-container {
+      margin-top: 12px;
+    }
+
+    .bar-label {
+      font-size: 10px;
+      color: #666;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .bar-track {
+      height: 8px;
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+
+    .bar-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.1s, background 0.2s;
+      width: 0%;
+    }
+
+    /* Hints */
+    .hints {
+      font-size: 11px;
+      color: #444;
+      text-align: center;
+      margin-top: 16px;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>POC 9 — Generative Creature Sounds</h1>
+    <p class="subtitle">Rust/WASM FM synthesis in AudioWorklet with SharedArrayBuffer telemetry</p>
+
+    <button id="btn-init">Start Audio Engine</button>
+    <div id="status">Click to initialize</div>
+
+    <!-- Sound Triggers -->
+    <div class="panel">
+      <div class="panel-title">Sound Triggers</div>
+      <div class="trigger-grid">
+        <button class="trigger-btn control" id="btn-footstep" disabled>
+          Footstep<span class="trigger-key">[1]</span>
+        </button>
+        <button class="trigger-btn control" id="btn-claw" disabled>
+          Claw Strike<span class="trigger-key">[2]</span>
+        </button>
+        <button class="trigger-btn control" id="btn-detach" disabled>
+          Part Detach<span class="trigger-key">[3]</span>
+        </button>
+        <button class="trigger-btn control" id="btn-breath" disabled>
+          Idle Breath<span class="trigger-key">[4]</span>
+        </button>
+        <button class="trigger-btn control" id="btn-vocalize" disabled>
+          Vocalize<span class="trigger-key">[5]</span>
+        </button>
+      </div>
+      <div class="action-row">
+        <button class="action-btn control" id="btn-stress" disabled>
+          Stress Test (30 voices) [Space]
+        </button>
+        <button class="action-btn control" id="btn-release" disabled>
+          Release All
+        </button>
+      </div>
+    </div>
+
+    <!-- Creature Properties -->
+    <div class="panel">
+      <div class="panel-title">Creature Properties</div>
+
+      <div class="slider-row">
+        <span class="slider-label">Body Size</span>
+        <input type="range" class="control" id="slider-body-size" min="0" max="1" step="0.01" value="0.5" disabled>
+        <span class="slider-val" id="slider-body-size-val">0.50</span>
+      </div>
+      <div class="slider-hint"><span>Small (high pitch)</span><span>Large (low pitch)</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Material</span>
+        <input type="range" class="control" id="slider-material" min="0" max="1" step="0.01" value="0.0" disabled>
+        <span class="slider-val" id="slider-material-val">0.00</span>
+      </div>
+      <div class="slider-hint"><span>Organic / Chitin</span><span>Metallic</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Weight</span>
+        <input type="range" class="control" id="slider-weight" min="0" max="1" step="0.01" value="0.5" disabled>
+        <span class="slider-val" id="slider-weight-val">0.50</span>
+      </div>
+      <div class="slider-hint"><span>Light (snappy)</span><span>Heavy (thuddy)</span></div>
+
+      <div class="slider-row">
+        <span class="slider-label">Aggression</span>
+        <input type="range" class="control" id="slider-aggression" min="0" max="1" step="0.01" value="0.3" disabled>
+        <span class="slider-val" id="slider-aggression-val">0.30</span>
+      </div>
+      <div class="slider-hint"><span>Calm (smooth)</span><span>Aggressive (harsh)</span></div>
+    </div>
+
+    <!-- Telemetry -->
+    <div class="panel">
+      <div class="panel-title">Telemetry (via SharedArrayBuffer)</div>
+      <div class="tel-grid">
+        <div class="tel-item">
+          <span class="tel-label">Active Voices</span>
+          <span class="tel-value" id="tel-voices">0 / 32</span>
+        </div>
+        <div class="tel-item">
+          <span class="tel-label">Render Time</span>
+          <span class="tel-value" id="tel-render-time" style="color: #4ade80;">0.0 &micro;s</span>
+        </div>
+        <div class="tel-item">
+          <span class="tel-label">Peak Level</span>
+          <span class="tel-value" id="tel-peak">0.000</span>
+        </div>
+        <div class="tel-item">
+          <span class="tel-label">Total Renders</span>
+          <span class="tel-value" id="tel-renders">0</span>
+        </div>
+      </div>
+
+      <div class="bar-container">
+        <div class="bar-label">Voice Usage</div>
+        <div class="bar-track">
+          <div class="bar-fill" id="voice-bar-fill"></div>
+        </div>
+        <div class="bar-label">Peak Level</div>
+        <div class="bar-track">
+          <div class="bar-fill" id="peak-bar-fill"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hints">
+      Keys [1-5] trigger sounds &middot; [Space] stress test &middot;
+      Sliders change creature properties in real-time
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

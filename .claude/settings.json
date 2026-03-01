@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if grep -rn 'WebGLRenderer' --include='*.ts' --include='*.tsx' --include='*.js' \"$CLAUDE_FILE_PATH\" 2>/dev/null; then echo '❌ BLOCKED: WebGLRenderer detected. This project requires WebGPURenderer. See CLAUDE.md.' && exit 1; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-02-28T16:42:21.240Z",
+  "seed": 42,
+  "tickCount": 56,
+  "placements": [
+    {
+      "creatureId": "creature_2",
+      "creatureName": "Flanker",
+      "placement": 1,
+      "damageDealt": 173.2,
+      "damageTaken": 18.44,
+      "partsLost": 2,
+      "partsDestroyed": 12,
+      "ticksSurvived": 56,
+      "deathCause": "survived"
+    },
+    {
+      "creatureId": "creature_1",
+      "creatureName": "Tank",
+      "placement": 2,
+      "damageDealt": 15.44,
+      "damageTaken": 107.33,
+      "partsLost": 6,
+      "partsDestroyed": 2,
+      "ticksSurvived": 55,
+      "deathCause": "no_locomotion"
+    },
+    {
+      "creatureId": "creature_3",
+      "creatureName": "Spiker",
+      "placement": 3,
+      "damageDealt": 33,
+      "damageTaken": 112.93,
+      "partsLost": 10,
+      "partsDestroyed": 4,
+      "ticksSurvived": 41,
+      "deathCause": "no_locomotion"
+    },
+    {
+      "creatureId": "creature_0",
+      "creatureName": "Berserker",
+      "placement": 4,
+      "damageDealt": 47.06,
+      "damageTaken": 30,
+      "partsLost": 4,
+      "partsDestroyed": 4,
+      "ticksSurvived": 26,
+      "deathCause": "no_locomotion"
+    }
+  ]
+}

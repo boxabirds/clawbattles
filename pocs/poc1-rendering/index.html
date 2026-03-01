@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Three.js WebGPU Instanced Rendering Benchmark</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a2e; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 10;
+    color: #e0e0e0;
+    background: rgba(10, 10, 30, 0.85);
+    padding: 16px 20px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    min-width: 260px;
+    backdrop-filter: blur(8px);
+    user-select: none;
+  }
+
+  #hud h2 {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    margin-bottom: 12px;
+  }
+
+  #fps-display {
+    font-size: 48px;
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  #fps-label {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 14px;
+  }
+
+  #instance-display {
+    font-size: 22px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+
+  #instance-label {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 14px;
+  }
+
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .slider-row label {
+    font-size: 12px;
+    color: #aaa;
+    white-space: nowrap;
+  }
+
+  #instance-slider {
+    flex: 1;
+    accent-color: #6c63ff;
+    cursor: pointer;
+  }
+
+  #renderer-info {
+    margin-top: 12px;
+    font-size: 11px;
+    color: #666;
+  }
+
+  #controls-hint {
+    margin-top: 8px;
+    font-size: 11px;
+    color: #555;
+    line-height: 1.5;
+  }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.webgpu.js",
+    "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.171.0/build/three.tsl.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.171.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+
+<div id="hud">
+  <h2>WebGPU Instanced Benchmark</h2>
+  <div id="fps-display">--</div>
+  <div id="fps-label">FPS</div>
+  <div id="instance-display">4,000</div>
+  <div id="instance-label">INSTANCES</div>
+  <div class="slider-row">
+    <label>1K</label>
+    <input type="range" id="instance-slider" min="1000" max="1000000" step="10000" value="4000">
+    <label>1M</label>
+  </div>
+  <div id="renderer-info">Initializing...</div>
+  <div id="controls-hint">
+    Drag: orbit &middot; Right-drag: pan &middot; Scroll: zoom
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const INITIAL_INSTANCE_COUNT = 4000;
+const SLIDER_MIN = 1000;
+const SLIDER_MAX = 1000000;
+const SLIDER_STEP = 10000;
+
+const GEOMETRY_TYPE_COUNT = 3; // sphere, cylinder, cone
+const SPHERE_RADIUS = 0.35;
+const SPHERE_WIDTH_SEGMENTS = 12;
+const SPHERE_HEIGHT_SEGMENTS = 8;
+const CYLINDER_RADIUS = 0.25;
+const CYLINDER_HEIGHT = 0.7;
+const CYLINDER_RADIAL_SEGMENTS = 10;
+const CONE_RADIUS = 0.3;
+const CONE_HEIGHT = 0.7;
+const CONE_RADIAL_SEGMENTS = 10;
+
+const GROUND_SIZE = 400;
+const GROUND_Y = -1.5;
+const GROUND_COLOR = 0x2a2a4a;
+
+const BASE_Y_OFFSET = 0;
+const BOB_AMPLITUDE = 0.3;
+const BOB_SPEED_MIN = 0.5;
+const BOB_SPEED_MAX = 2.0;
+const ROTATION_SPEED_MIN = 0.2;
+const ROTATION_SPEED_MAX = 1.5;
+
+const AMBIENT_LIGHT_COLOR = 0x8888cc;
+const AMBIENT_LIGHT_INTENSITY = 0.6;
+const DIR_LIGHT_COLOR = 0xffffff;
+const DIR_LIGHT_INTENSITY = 1.2;
+const DIR_LIGHT_POSITION = new THREE.Vector3(30, 50, 20);
+
+const CAMERA_FOV = 35;
+const CAMERA_NEAR = 0.1;
+const CAMERA_FAR = 1000;
+const CAMERA_INITIAL_DISTANCE = 50;
+const CAMERA_ISO_ELEVATION = Math.PI / 6; // 30 degrees
+const CAMERA_ISO_AZIMUTH = Math.PI / 4;   // 45 degrees
+
+const FPS_SAMPLE_INTERVAL_MS = 250;
+const FPS_GOOD_THRESHOLD = 50;
+const FPS_WARN_THRESHOLD = 30;
+const FPS_COLOR_GOOD = '#4ade80';
+const FPS_COLOR_WARN = '#facc15';
+const FPS_COLOR_BAD = '#f87171';
+
+// Spread scales with count so high counts don't pile up
+function spreadForCount(count) {
+  return 30 + Math.sqrt(count) * 0.5;
+}
+
+// ---------------------------------------------------------------------------
+// DOM refs
+// ---------------------------------------------------------------------------
+const fpsDisplay = document.getElementById('fps-display');
+const instanceDisplay = document.getElementById('instance-display');
+const instanceSlider = document.getElementById('instance-slider');
+const rendererInfo = document.getElementById('renderer-info');
+
+// ---------------------------------------------------------------------------
+// Scene setup
+// ---------------------------------------------------------------------------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+scene.fog = new THREE.Fog(0x1a1a2e, 100, 300);
+
+const camera = new THREE.PerspectiveCamera(CAMERA_FOV, window.innerWidth / window.innerHeight, CAMERA_NEAR, CAMERA_FAR);
+
+// Position camera at isometric-ish angle
+const camX = CAMERA_INITIAL_DISTANCE * Math.cos(CAMERA_ISO_ELEVATION) * Math.sin(CAMERA_ISO_AZIMUTH);
+const camY = CAMERA_INITIAL_DISTANCE * Math.sin(CAMERA_ISO_ELEVATION);
+const camZ = CAMERA_INITIAL_DISTANCE * Math.cos(CAMERA_ISO_ELEVATION) * Math.cos(CAMERA_ISO_AZIMUTH);
+camera.position.set(camX, camY, camZ);
+camera.lookAt(0, 0, 0);
+
+// Lighting
+const ambientLight = new THREE.AmbientLight(AMBIENT_LIGHT_COLOR, AMBIENT_LIGHT_INTENSITY);
+scene.add(ambientLight);
+
+const dirLight = new THREE.DirectionalLight(DIR_LIGHT_COLOR, DIR_LIGHT_INTENSITY);
+dirLight.position.copy(DIR_LIGHT_POSITION);
+scene.add(dirLight);
+
+// Ground plane
+const groundGeo = new THREE.PlaneGeometry(GROUND_SIZE, GROUND_SIZE);
+const groundMat = new THREE.MeshPhongMaterial({ color: GROUND_COLOR, shininess: 10 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = GROUND_Y;
+scene.add(ground);
+
+// ---------------------------------------------------------------------------
+// Geometries (shared across rebuilds)
+// ---------------------------------------------------------------------------
+const sphereGeo = new THREE.SphereGeometry(SPHERE_RADIUS, SPHERE_WIDTH_SEGMENTS, SPHERE_HEIGHT_SEGMENTS);
+const cylinderGeo = new THREE.CylinderGeometry(CYLINDER_RADIUS, CYLINDER_RADIUS, CYLINDER_HEIGHT, CYLINDER_RADIAL_SEGMENTS);
+const coneGeo = new THREE.ConeGeometry(CONE_RADIUS, CONE_HEIGHT, CONE_RADIAL_SEGMENTS);
+const geometries = [sphereGeo, cylinderGeo, coneGeo];
+
+// Material (flat phong for toon-ish look)
+const material = new THREE.MeshPhongMaterial({
+  vertexColors: true,
+  flatShading: true,
+  shininess: 20,
+});
+
+// ---------------------------------------------------------------------------
+// Instance data
+// ---------------------------------------------------------------------------
+let meshes = [];
+let instanceData = [];
+let currentCount = INITIAL_INSTANCE_COUNT;
+
+const dummy = new THREE.Object3D();
+const tempColor = new THREE.Color();
+
+function buildInstances(totalCount) {
+  for (const m of meshes) {
+    scene.remove(m);
+    m.dispose();
+  }
+  meshes = [];
+  instanceData = [];
+
+  const spread = spreadForCount(totalCount);
+
+  const perType = Math.floor(totalCount / GEOMETRY_TYPE_COUNT);
+  const remainder = totalCount - perType * GEOMETRY_TYPE_COUNT;
+  const counts = geometries.map((_, i) => perType + (i < remainder ? 1 : 0));
+
+  for (let t = 0; t < GEOMETRY_TYPE_COUNT; t++) {
+    const count = counts[t];
+    if (count === 0) continue;
+
+    const mesh = new THREE.InstancedMesh(geometries[t], material, count);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+
+    for (let i = 0; i < count; i++) {
+      const px = (Math.random() - 0.5) * spread;
+      const pz = (Math.random() - 0.5) * spread;
+      const py = BASE_Y_OFFSET + Math.random() * 0.5;
+      const s = 0.6 + Math.random() * 0.8;
+
+      dummy.position.set(px, py, pz);
+      dummy.scale.set(s, s, s);
+      dummy.rotation.set(
+        Math.random() * Math.PI * 2,
+        Math.random() * Math.PI * 2,
+        0
+      );
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+
+      const hue = Math.random();
+      const saturation = 0.6 + Math.random() * 0.3;
+      const lightness = 0.45 + Math.random() * 0.2;
+      tempColor.setHSL(hue, saturation, lightness);
+      mesh.setColorAt(i, tempColor);
+
+      instanceData.push({
+        px, py, pz, s,
+        bobPhase: Math.random() * Math.PI * 2,
+        bobSpeed: BOB_SPEED_MIN + Math.random() * (BOB_SPEED_MAX - BOB_SPEED_MIN),
+        rotSpeed: ROTATION_SPEED_MIN + Math.random() * (ROTATION_SPEED_MAX - ROTATION_SPEED_MIN),
+        rotAxis: Math.floor(Math.random() * 3),
+      });
+    }
+
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+    scene.add(mesh);
+    meshes.push(mesh);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Renderer
+// ---------------------------------------------------------------------------
+let renderer;
+let controls;
+
+async function initRenderer() {
+  try {
+    renderer = new THREE.WebGPURenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    document.body.appendChild(renderer.domElement);
+
+    await renderer.init();
+
+    rendererInfo.textContent = 'Renderer: WebGPU';
+  } catch (err) {
+    console.error('WebGPU init failed, falling back to WebGL:', err);
+
+    if (renderer) {
+      renderer.dispose();
+      if (renderer.domElement.parentNode) {
+        renderer.domElement.parentNode.removeChild(renderer.domElement);
+      }
+    }
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    document.body.appendChild(renderer.domElement);
+
+    rendererInfo.textContent = 'Renderer: WebGL (WebGPU unavailable)';
+  }
+
+  // OrbitControls for mouse navigation
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.1;
+  controls.enablePan = true;
+  controls.panSpeed = 1.5;
+  controls.rotateSpeed = 0.8;
+  controls.zoomSpeed = 1.2;
+  controls.minDistance = 5;
+  controls.maxDistance = 500;
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
+
+// ---------------------------------------------------------------------------
+// Animation
+// ---------------------------------------------------------------------------
+function updateInstances(elapsed) {
+  let dataIdx = 0;
+
+  for (let t = 0; t < meshes.length; t++) {
+    const mesh = meshes[t];
+    const count = mesh.count;
+
+    for (let i = 0; i < count; i++) {
+      const d = instanceData[dataIdx];
+
+      const bobY = d.py + Math.sin(elapsed * d.bobSpeed + d.bobPhase) * BOB_AMPLITUDE;
+
+      dummy.position.set(d.px, bobY, d.pz);
+      dummy.scale.set(d.s, d.s, d.s);
+
+      const angle = elapsed * d.rotSpeed;
+      switch (d.rotAxis) {
+        case 0: dummy.rotation.set(angle, 0, 0); break;
+        case 1: dummy.rotation.set(0, angle, 0); break;
+        case 2: dummy.rotation.set(0, 0, angle); break;
+      }
+
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+
+      dataIdx++;
+    }
+
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FPS counter
+// ---------------------------------------------------------------------------
+let frameCount = 0;
+let lastFpsSampleTime = 0;
+
+function updateFps(now) {
+  frameCount++;
+
+  if (now - lastFpsSampleTime >= FPS_SAMPLE_INTERVAL_MS) {
+    const fps = Math.round((frameCount * 1000) / (now - lastFpsSampleTime));
+    frameCount = 0;
+    lastFpsSampleTime = now;
+
+    fpsDisplay.textContent = fps;
+
+    if (fps >= FPS_GOOD_THRESHOLD) {
+      fpsDisplay.style.color = FPS_COLOR_GOOD;
+    } else if (fps >= FPS_WARN_THRESHOLD) {
+      fpsDisplay.style.color = FPS_COLOR_WARN;
+    } else {
+      fpsDisplay.style.color = FPS_COLOR_BAD;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Slider
+// ---------------------------------------------------------------------------
+instanceSlider.addEventListener('input', () => {
+  const newCount = parseInt(instanceSlider.value, 10);
+  if (newCount !== currentCount) {
+    currentCount = newCount;
+    instanceDisplay.textContent = currentCount.toLocaleString();
+    buildInstances(currentCount);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Resize
+// ---------------------------------------------------------------------------
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+async function main() {
+  await initRenderer();
+
+  buildInstances(currentCount);
+  lastFpsSampleTime = performance.now();
+
+  const clock = new THREE.Clock();
+
+  function animate() {
+    const elapsed = clock.getElapsedTime();
+    const now = performance.now();
+
+    updateInstances(elapsed);
+    updateFps(now);
+    controls.update();
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+  }
+
+  requestAnimationFrame(animate);
+}
+
+main().catch(err => {
+  console.error(err);
+  rendererInfo.textContent = 'Error: ' + err.message;
+});
+</script>
+
+</body>
+</html>

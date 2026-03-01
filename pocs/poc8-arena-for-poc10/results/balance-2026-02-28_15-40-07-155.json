@@ -1,0 +1,125 @@
+{
+  "timestamp": "2026-02-28T15:40:07.155Z",
+  "matchesPerCombination": 20,
+  "totalMatches": 700,
+  "archetypes": [
+    {
+      "name": "berserker",
+      "winRate": 0.2957142857142857,
+      "wins": 207,
+      "totalMatches": 700,
+      "avgDamageDealt": 67.7,
+      "avgDamageTaken": 45.8,
+      "avgTicksSurvived": 47,
+      "headToHead": {
+        "tank": {
+          "wins": 142,
+          "matches": 420,
+          "winRate": 0.3380952380952381
+        },
+        "flanker": {
+          "wins": 154,
+          "matches": 420,
+          "winRate": 0.36666666666666664
+        },
+        "spiker": {
+          "wins": 92,
+          "matches": 420,
+          "winRate": 0.21904761904761905
+        }
+      }
+    },
+    {
+      "name": "flanker",
+      "winRate": 0.23857142857142857,
+      "wins": 167,
+      "totalMatches": 700,
+      "avgDamageDealt": 70.7,
+      "avgDamageTaken": 46.9,
+      "avgTicksSurvived": 53,
+      "headToHead": {
+        "berserker": {
+          "wins": 104,
+          "matches": 420,
+          "winRate": 0.24761904761904763
+        },
+        "tank": {
+          "wins": 117,
+          "matches": 420,
+          "winRate": 0.2785714285714286
+        },
+        "spiker": {
+          "wins": 112,
+          "matches": 420,
+          "winRate": 0.26666666666666666
+        }
+      }
+    },
+    {
+      "name": "spiker",
+      "winRate": 0.2257142857142857,
+      "wins": 158,
+      "totalMatches": 700,
+      "avgDamageDealt": 67.5,
+      "avgDamageTaken": 75.1,
+      "avgTicksSurvived": 66,
+      "headToHead": {
+        "berserker": {
+          "wins": 105,
+          "matches": 420,
+          "winRate": 0.25
+        },
+        "tank": {
+          "wins": 75,
+          "matches": 420,
+          "winRate": 0.17857142857142858
+        },
+        "flanker": {
+          "wins": 106,
+          "matches": 420,
+          "winRate": 0.2523809523809524
+        }
+      }
+    },
+    {
+      "name": "tank",
+      "winRate": 0.24,
+      "wins": 168,
+      "totalMatches": 700,
+      "avgDamageDealt": 44.1,
+      "avgDamageTaken": 82.2,
+      "avgTicksSurvived": 90,
+      "headToHead": {
+        "berserker": {
+          "wins": 51,
+          "matches": 420,
+          "winRate": 0.12142857142857143
+        },
+        "flanker": {
+          "wins": 105,
+          "matches": 420,
+          "winRate": 0.25
+        },
+        "spiker": {
+          "wins": 150,
+          "matches": 420,
+          "winRate": 0.35714285714285715
+        }
+      }
+    }
+  ],
+  "verdict": {
+    "balanced": true,
+    "dominantCheck": {
+      "passed": true,
+      "maxWinRate": 0.2957142857142857,
+      "threshold": 0.6
+    },
+    "viableCheck": {
+      "passed": true,
+      "viableCount": 4,
+      "totalCount": 4,
+      "threshold": 0.22
+    }
+  }
+}

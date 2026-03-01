@@ -1,0 +1,21 @@
+# secrets
+.env
+.env.test
+
+# dependencies
+node_modules
+
+# build outputs
+dist
+target
+pkg
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# editor
+*.swp
+*.swo
+.idea
+.vscode

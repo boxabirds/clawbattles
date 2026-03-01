@@ -1,0 +1,15 @@
+{
+  "name": "poc8-arena",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "match": "bun run src/index.ts match",
+    "balance": "bun run src/index.ts balance",
+    "evolve": "bun run src/index.ts evolve"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}

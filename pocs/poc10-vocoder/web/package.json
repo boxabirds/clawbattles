@@ -1,0 +1,14 @@
+{
+  "name": "poc10-vocoder",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "vite": "^6.2.0",
+    "typescript": "^5.7.0"
+  }
+}

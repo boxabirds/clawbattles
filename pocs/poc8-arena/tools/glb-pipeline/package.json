@@ -1,0 +1,13 @@
+{
+  "name": "glb-pipeline",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bakeoff": "bun bakeoff.ts",
+    "generate": "bun generate.ts",
+    "normalize": "bun normalize.ts"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  }
+}
